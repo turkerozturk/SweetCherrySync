@@ -6,6 +6,10 @@ License: GPL 3.0
 
 CTB database with CherryTree Version 1.1.3 is supported (without any responsibility).
 
+## Download URL of Compiled Version
+
+https://github.com/turkerozturk/SweetCherrySync/releases/download/1.0.0/sweetcherrysync-1.0.0-compiled.zip
+
 
 ## Description
 
