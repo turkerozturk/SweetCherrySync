@@ -1,0 +1,168 @@
+server:
+  port: 8081
+
+# You dont need to change this H2 database settings.
+# this database is for storing various keys and values during application run. (string hepsi).
+# istatistik gibi degiskenleri bu veritabanina kaydedip gosteriyorum. Silinirse program calisinca tekrar olusur.
+my:
+  datasource:
+    dialect: org.hibernate.dialect.H2Dialect
+
+    #url: jdbc:h2:mem:testdb bunu denedim hafizada olusturur
+    #                        ama bilgisayar uykudan kalkinca sorgular tablolari bulamadigi icin hata veriyor
+    #url: jdbc:h2:tcp://localhost/c:/tmp/testdb bunu denemedim
+    #url: jdbc:h2:file://c:/testdb mutlak yol
+    #  ./ uygulama dizinini ifade eder asagidaki klasor yolunda ve sistemde SweetCherrySync.mv.db olur dosya adi, ".mv.db" ekler.
+    # Ayrica baska bir iki dosya daha olusturabilir calisma esnasinda.
+    url: jdbc:h2:file:./SweetCherrySync
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: password
+    init-mode: always
+    ddl-auto: create
+  scheduler:
+    # using in SchedulerConfig.java -> syncDatabases()
+    delayInSeconds: 60
+
+logging:
+  level:
+    org:
+    #hibernate: DEBUG
+    # hibernate.SQL: DEBUG
+    #hibernate.type: TRACE
+    com:
+      zaxxer:
+        hikari:
+          HikariConfig: DEBUG
+
+
+
+
+
+spring:
+  main:
+    #https://stackoverflow.com/questions/32078015/spring-boot-enable-disable-embedded-tomcat-with-profile
+    #servlet is default, none is to disable Tomcat
+    web-application-type: servlet
+  #https://www.youtube.com/watch?v=PSrHcCwvfVQ
+  #H2 Database Spring Boot - How to connect and configure an in-memory H2 database in Spring Boot
+  #Dan Vega Videounun sonlarina dogru security enabled ise ne yapmak gerektigini de cok guzel anlatiyor.
+  #h2 database console /h2-console is already enabled in development mode
+  #h2:
+    #console:
+      #enabled: true
+  #asagidaki ayar h2 database isminin bizim verdigimiz sekilde olmasini saglar ama zaten
+  #biz burada datasource tanimlamiyoruz, kendi degiskenimizde baska yerde isim vererek tanimladik
+  #dolayisiyla gerek yok.
+  #datasource:
+    #generate-unique-name: false
+    #initialize:true
+  jpa:
+    properties:
+      hibernate:
+        temp:
+          use_jdbc_metadata_defaults: false
+    hibernate:
+      ddl-auto: none
+    show-sql: true
+
+########################################################################################################################
+## BELOW ARE THE DEFAULT EXAMPLE CONNECTION SETTINGS FOR 4 DIFFERENT DATABASES.
+## IF YOU WANT TO OVERWRITE THEM, CREATE another file named application.yml too. Put it into the folder with the
+## aplication executale. And paste "from" and "destination" setting into it. And change their values.
+## Because it is YAML file, you need to be careful to space indentation.
+
+########################################################################################################################
+## SQLITE, YOUR source CTB database(I call it "from" database). You can use CherryTree and SweetCherrySync at the same time.
+## SweetCherrySync is using the "from" database for reading only.
+# tag::fromDatabase[]
+# YOUR CTB FILE (It is SQLite)
+from:
+  datasource:
+    dialect: org.hibernate.community.dialect.SQLiteDialect
+    url: jdbc:sqlite:C:/Users/username/Desktop/mydatabase.ctb
+    driver-class-name: org.sqlite.JDBC
+    username:
+    password:
+    init-mode: always
+# end::fromDatabase[]
+
+########################################################################################################################
+## DESTINATION CONNECTION SETTINGS - ONLY UNCOMMENT ONE destination and change with your values. Comment others. #######
+## I TRIED four different database servers, all are working.
+## I prepared the schema files for those databases. Put schema files into the same folder of the SweetCherrySync executable.
+## You can modify schema files for better optimisation.
+## You need to create the databases manually, except SQLite. If your run the application, if the application can connect
+## to the database, if the tables in the schema file are not exist, the application will create the schema with the
+## schema file. - Turker.
+
+# tag::destinationIsSqlite[]
+# SQLITE
+#destination:
+#  datasource:
+#    dialect: org.hibernate.community.dialect.SQLiteDialect
+#    url: jdbc:sqlite:tmp.ctb
+#    driver-class-name: org.sqlite.JDBC
+#    username:
+#    password:
+#    init-mode: always
+#    schema: schema-sqlite.sql
+# end::destinationIsSqlite[]
+
+# tag::destinationIsMysql[]
+## MYSQL
+#destination:
+#  datasource:
+#    dialect: org.hibernate.dialect.MySQLDialect
+#    url: jdbc:mysql://localhost:3306/ctb
+#    driver-class-name: com.mysql.cj.jdbc.Driver
+#    username: username
+#    password: 123456
+#    init-mode: always
+#    schema: schema-mysql.sql
+# end::destinationIsMysql[]
+
+##org.hibernate.orm.deprecation: HHH90000025: MySQLDialect does not need to be specified explicitly
+##using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+#
+#Mysql insert hizi cok yavasliyor birkacyuz kayittan sonra. Sebebini cozemedim. Diger dbler hizli.
+##https://aiven.io/community/forum/t/faq-why-are-my-insert-statements-slow-on-mysql/433
+
+# tag::destinationIsPostgresql[]
+## POSTGRESQL
+#destination:
+#  datasource:
+#    dialect: org.hibernate.dialect.PostgreSQLDialect
+#    url: jdbc:postgresql://127.0.0.1:5432/ctb
+#    driver-class-name: org.postgresql.Driver
+#    username: postgres
+#    password: 123456
+#    init-mode: always
+#    schema: schema-postgresql.sql
+# end::destinationIsPostgresql[]
+
+## A life saver tutorial to install and setup postgresql server into raspberry pi or ubuntu linux and access remotely:
+## I installed postgresql 13 because raspberry has max that version. Tested. It works.
+## https://www.hostinger.com/tutorials/how-to-install-postgresql-on-ubuntu
+##
+## Windowsta bolgesel ayarlarin ingilizce olmasina dikkat et. Ayrica en son surumu olan 17x i kurdum ve calisti.
+## postgresql-17.4-1-windows-x64.exe
+## Bu adresten indirilir denedim kurdum: https://www.enterprisedb.com/downloads/postgres-postgresql-downloads
+
+# tag::destinationIsMssql[]
+## MSSQL (Microsoft SQL Server)
+#destination:
+#  datasource:
+#    dialect: org.hibernate.dialect.SQLServerDialect
+#    url: jdbc:sqlserver://127.0.0.1:1433;databaseName=ctb;encrypt=true;trustServerCertificate=true
+#    driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
+#    username: sa
+#    password: 123456
+#    init-mode: always
+#    schema: schema-mssql.sql
+# end::destinationIsMssql[]
+
+
+
+
+

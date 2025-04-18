@@ -1,0 +1,155 @@
+== About
+
+=== Document Compiler
+[horizontal]
+Jamal Version:: {%@version%}
+Compiled In:: {%#if /{@env intellij.asciidoctor.plugin}/This was compiled in IntelliJ or AsciidocFX/This was compiled outside IntelliJ or AsciidocFX/%}
+Asciidoctorj Version:: {%asciidoctorj:version%}
+
+=== Environment Variables
+
+[horizontal]
+JAVA_HOME:: {%@env JAVA_HOME%}
+[WARNING]
+The JAVA_HOME environment variable is affected by the build location. Therefore, the JAVA_HOME visible to the AsciidoctorJ application you are using(IntelliJ, AsciidocFX etc.) may differ from the JAVA_HOME in the system console.
+
+PROCESSOR_IDENTIFIER:: {%@env PROCESSOR_IDENTIFIER%}
+PROCESSOR_ARCHITECTURE:: {%@env PROCESSOR_ARCHITECTURE%}
+
+
+=== pom.xml
+
+==== Meta
+// You need to adjust the relative path to the pom.xml file(add or remove more than one ../ pattern):
+{%@snip:xml pomfile=../../../../pom.xml%}
+{%#define PROJECTVERSION={%pomfile /project/version/text()%}%}
+{%#define PROJECTNAME={%pomfile /project/name/text()%}%}
+{%#define PROJECTDESCRIPTION={%pomfile /project/description/text()%}%}
+{%#define SPRINGBOOTVERSION={%pomfile /project/parent/version/text()%}%}
+{%#define JAVAVERSION={%pomfile /project/properties/java.version/text()%}%}
+
+[horizontal]
+Project Name:: {%PROJECTNAME%}
+Project Version:: {%PROJECTVERSION%}
+Proje Definition:: {%PROJECTDESCRIPTION%}
+Spring Boot Version: {%SPRINGBOOTVERSION%}
+Java Version:: {%JAVAVERSION%}
+
+
+
+
+==== Plugins
+
+[grid=rows,stripes=even]
+|===
+|*groupId* |*artifactId* |*version*
+{%#block
+
+{%@program
+ROWS = ""
+
+' Go through the test cases from 1 to the number of test cases
+' Use the XPath to get the data from the XML
+for i=1 to pomfile("count(/project/build/plugins/plugin)")
+' get the path of the test case
+path = "/project/build/plugins/plugin["+i+"]"
+' get the data from the XML using XPath
+rawCommentPath = pomfile(path + "/preceding-sibling::comment()[1]")
+' I didnt find how to trim spaces. Therefore I chopped one space from the beginning of text, and one from the end of text. Not a good solution.
+commentPath = rawCommentPath.string:chop("pre=\" \" post=\" \" ")
+groupId = pomfile(path+"/groupId/text()" )
+artifactId = pomfile(path+"/artifactId/text()" )
+version = pomfile(path+"/version/text()" )
+artifactIdWithLink =  "link:" + commentPath + "[" + artifactId + "]"
+ROW = "|*" + groupId +  "*|" + artifactIdWithLink + "|" + version
+ROWS = ROWS + "\n" + ROW
+<< "|" + groupId
+<< "|" + artifactId
+<< "|" + version
+next
+%}
+|===
+
+==== Resources
+
+[grid=rows,stripes=even]
+|===
+|*directory*
+{%@program
+' Go through the test cases from 1 to the number of test cases
+' Use the XPath to get the data from the XML
+for i=1 to pomfile("count(/project/build/resources/resource)")
+' get the path of the test case
+path = "/project/build/resources/resource["+i+"]"
+' get the data from the XML using XPath
+directory = pomfile(path+"/directory/text()" )
+<< "|" + directory
+next
+
+<< sort(ROWS)
+
+%}
+
+{%@export ROWS%}
+
+
+
+%}
+
+{%ROWS%}
+|===
+
+==== Dependencies
+
+
+
+[grid=rows,stripes=even]
+|===
+|*groupId* |*artifactId* |*version*
+
+{%#block
+
+{%@program
+ROWS = ""
+' Go through the test cases from 1 to the number of test cases
+' Use the XPath to get the data from the XML
+for i=1 to pomfile("count(/project/dependencies/dependency)")
+' get the path of the dependency
+path = "/project/dependencies/dependency["+i+"]"
+' get the data from the XML using XPath
+rawCommentPath = pomfile(path + "/preceding-sibling::comment()[1]")
+' I didnt find how to trim spaces. Therefore I chopped one space from the beginning of text, and one from the end of text. Not a good solution.
+commentPath = rawCommentPath.string:chop("pre=\" \" post=\" \" ")
+
+groupId = pomfile(path+"/groupId/text()" )
+artifactId = pomfile(path+"/artifactId/text()" )
+version = pomfile(path+"/version/text()" )
+
+artifactIdWithLink =  "link:" + commentPath + "[" + artifactId + "]"
+ROW = "|*" + groupId +  "*|" + artifactIdWithLink + "|" + version
+ROWS = ROWS + "\n" + ROW
+next
+
+<< sort(ROWS)
+
+%}
+
+{%@export ROWS%}
+
+
+
+%}
+
+{%ROWS%}
+
+
+|===
+---
+
+https://docs.asciidoctor.org/
+
+https://github.com/verhas/jamal/tree/master
+
+
+---
+Coded by link:https://github.com/turkerozturk[Türker Öztürk] - 2024-09-19

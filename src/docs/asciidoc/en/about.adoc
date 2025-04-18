@@ -1,0 +1,90 @@
+== About
+
+=== Document Compiler
+[horizontal]
+Jamal Version:: 2.8.1
+Compiled In:: This was compiled in IntelliJ or AsciidocFX
+Asciidoctorj Version:: 2.5.12
+
+=== Environment Variables
+
+[horizontal]
+JAVA_HOME:: C:\Program Files\JetBrains\IntelliJ IDEA Community Edition 2022.3.1\jbr
+[WARNING]
+The JAVA_HOME environment variable is affected by the build location. Therefore, the JAVA_HOME visible to the AsciidoctorJ application you are using(IntelliJ, AsciidocFX etc.) may differ from the JAVA_HOME in the system console.
+
+PROCESSOR_IDENTIFIER:: Intel64 Family 6 Model 142 Stepping 10, GenuineIntel
+PROCESSOR_ARCHITECTURE:: AMD64
+
+
+=== pom.xml
+
+==== Meta
+// You need to adjust the relative path to the pom.xml file(add or remove more than one ../ pattern):
+
+
+
+
+
+
+
+[horizontal]
+Project Name:: SweetCherrySync
+Project Version:: 1.0.0
+Proje Definition:: Spring Boot database sync project for CherryTree CTB SQLite files.
+Spring Boot Version: 3.3.1
+Java Version:: 17
+
+
+
+
+==== Plugins
+
+[grid=rows,stripes=even]
+|===
+|*groupId* |*artifactId* |*version*
+
+
+
+|*org.springframework.boot*|link:[spring-boot-maven-plugin]|
+|===
+
+==== Dependencies
+
+
+
+[grid=rows,stripes=even]
+|===
+|*groupId* |*artifactId* |*version*
+
+
+
+
+|*org.springframework.boot*|link:[spring-boot-starter-data-jpa]|
+|*org.springframework.boot*|link:[spring-boot-starter-web]|
+|*org.springframework.boot*|link:[spring-boot-devtools]|3.0.4
+|*org.projectlombok*|link:[lombok]|
+|*org.springframework.boot*|link:[spring-boot-starter-test]|
+|*org.hibernate.orm*|link:[hibernate-core]|6.4.4.Final
+|*org.hibernate.orm*|link:[hibernate-community-dialects]|6.4.4.Final
+|*org.xerial*|link:[sqlite-jdbc]|3.46.0.0
+|*com.mysql*|link:[mysql-connector-j]|9.0.0
+|*org.springframework.boot*|link:[spring-boot-starter-thymeleaf]|
+|*nz.net.ultraq.thymeleaf*|link:[thymeleaf-layout-dialect]|3.3.0
+|*com.microsoft.sqlserver*|link:https://mvnrepository.com/artifact/com.microsoft.sqlserver/mssql-jdbc[mssql-jdbc]|12.6.3.jre11
+|*org.postgresql*|link:https://mvnrepository.com/artifact/org.postgresql/postgresql[postgresql]|42.7.5
+|*org.hibernate.orm*|link:https://mvnrepository.com/artifact/org.hibernate.orm/hibernate-ant[hibernate-ant]|6.5.2.Final
+|*com.h2database*|link:https://mvnrepository.com/artifact/com.h2database/h2[h2]|2.3.230
+|*org.yaml*|link:https://mvnrepository.com/artifact/org.yaml/snakeyaml[snakeyaml]|2.4
+
+
+|===
+---
+
+https://docs.asciidoctor.org/
+
+https://github.com/verhas/jamal/tree/master
+
+
+---
+Coded by link:https://github.com/turkerozturk[Türker Öztürk] - 2024-09-19

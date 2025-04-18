@@ -1,0 +1,189 @@
+== Installation
+:source-highlighter: rouge
+:docinfo: shared
+:icons: font
+
+{%#yaml:define yamlContent={%@include [verbatim] ../../../../main/resources/application.yml%}%}
+
+{%@snip:xml pomfile=../../../../../pom.xml%}
+
+:httpportnumber: {%@yaml:get (from=yamlContent) server.port%}
+
+Due to version differences in software components (whether versions are older or newer), issues may occur.
+
+=== Checking the Java Version
+
+{%#define JAVAVERSION={%pomfile /project/properties/java.version/text()%}%}
+{%#define PROJECTNAME={%pomfile /project/name/text()%}%}
+{%#define PROJECTVERSION={%pomfile /project/version/text()%}%}
+
+//https://github.com/verhas/jamal/tree/f461c1f36b9c99ca71472becb2ab79c7e7d599a7/jamal-yaml
+
+// https://github.com/search?q=repo%3Averhas%2Fjamal%20%40include&type=code
+
+Since the Java version specified in the `pom.xml` file is `{%JAVAVERSION%}`,
+
+- The system environment variable `JAVA_HOME` must also point to a Java installation directory of the same version.
+
+  java -version
+
+- If running from IntelliJ IDEA Community Edition, follow the menu path below to select a Java version of `{%JAVAVERSION%}`:
++
+.menü yolu
+----
+IntelliJ IDEA
+  File
+    Project Structure
+      Project Settings
+        Project
+          SDK
+----
+
+=== Downloading the Files
+
+
+- To clone the files from the repository, link:https://git-scm.com/[git] must be installed. If it is installed, run the following command in the console from an empty folder.
++
+:gitrepository: https://github.com/turkerozturk/{%PROJECTNAME%}
++
+[source, console, subs="attributes+"]
+-----
+git clone {gitrepository}.git
+-----
+- Or, the files can be downloaded as an archive from {gitrepository}/archive/refs/heads/main.zip using a web browser, and the files extracted from the archive.
+
+=== Building from Source Code
+
+Open a console window in the `{%PROJECTNAME%}` folder. Run the following command.
+
+.windows
+ mvnw.cmd clean package
+
+.linux
+ ./mvnw clean package
+
+[NOTE]
+This command will perform a clean build using the Maven version specified in the project's `.mvn/wrapper/maven-wrapper.properties` file (if not found on the system, it will download it to the `KULLANICININ EV DİZİNİ/.m2/wrapper/dists` directory and then perform a clean build, removing any previous build folder).
+
+[WARNING]
+On Linux, to allow the `mvnw` command to run, you must once run `chmod +x mvnw` to mark the file as executable.
+
+:compiled-jar-file: {%PROJECTNAME%}-{%PROJECTVERSION%}.jar
+
+As a result, the built project will be available as a JAR file in the `target` directory within the project directory.
+
+The JAR file will be created with the name `{compiled-jar-file}`.
+
+=== Checking the Port Number Before Running
+
+[TIP]
+You can proceed to the next section. If your application does not run, return to this section, check the port, adjust the application settings if necessary, and try again.
+
+==== If Another Application Is Using the Port Number
+
+You can find an unused port number by trial and error or with a console command. To check whether the default ports used by the application are free, run:
+
+[source, console, subs="attributes+"]
+.windows cmd
+----
+netstat -ano -p tcp | find "{httpportnumber}"
+----
+
+If the command output shows:
+[listing, subs="attributes,normal"]
+----
+TCP    0.0.0.0:{httpsportnumber}            0.0.0.0:0              LISTENING       *PID numarası*
+----
+
+and
+
+[listing, subs="attributes,normal"]
+----
+TCP    0.0.0.0:{httpportnumber}            0.0.0.0:0              LISTENING       *PID numarası*
+----
+
+then the port is in use, and to run our application you need to either find and terminate the application using that port, or change the port number of our application.
+
+[NOTE]
+For Linux, the equivalent commands are: `sudo netstat -ano -p tcp` and `ps -ef | grep *PID numarası*`.
+
+==== Finding the Process by PID
+
+If you want to find which application is using a specific PID, use the following command:
+
+[listing, subs="attributes,normal"]
+----
+tasklist | find "*PID numarası*"
+----
+
+This command will display the name of the process.
+
+If it produces no output, the port is free, and our application should run without issues using that port.
+
+==== If You Want to Use Different Port Numbers
+
+You need to specify an unused port number in the `application.yml` file.
+
+- If the project is to be run from source code, the file is located at `*PROJEKLASÖRÜ*/src/main/resources/application.yml`.
+
+- If the project is to be run as a JAR file, create an `application.yml` file in the same directory as the JAR file. The indentation from the line beginnings must be the same.
+
+[source, yaml, subs="attributes+"]
+.the section that should be in the application.yml file
+----
+server:
+  port: {httpportnumber} # <.>
+----
+
+<.> HTTP port number
+
+=== Running the Project
+
+==== Running from Source Code
+
+To run the uncompiled project, open a console window in the directory containing the `mvnw` file and run the following command:
+
+.windows cmd konsolunda
+ mvnw.cmd spring-boot:run
+
+.linux terminalinde veya windows powershell konsolunda
+ ./mvnw spring-boot:run
+
+==== Running the Compiled File
+
+[source, console, subs="attributes+"]
+.windows cmd
+----
+java -jar `{compiled-jar-file}`
+----
+
+[WARNING]
+When running the compiled JAR file, make sure to run it from the same directory where the file is located. Otherwise, after the application starts, you may encounter issues with the locations of required files and directories during use.
+
+=== Logging in with a Web Browser
+
+Access the application via `https://localhost:{httpportnumber}`.
+
+The web page only displays statistical information; it is not required for synchronization. The web server feature can be disabled.
+
+[source, yaml, subs="attributes+"]
+.the section that should be in the application.yml file (enable/disable embedded Tomcat)
+----
+spring:
+  main:
+    web-application-type: servlet # <.>
+----
+
+<.> The default value is `servlet`; to disable it, set it to `none`.
+
+---
+=== Resources
+
+- link:https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository[Cloning a repository]
+- link:https://www.baeldung.com/maven-wrapper[A Quick Guide to Maven Wrapper]
+- link:https://www.ysoft.com/knowledge/determine-which-program-uses-or-blocks-a-port[Determine Which Program Uses or Blocks a Port]
+
+---
+
+---
+Author: link:https://github.com/turkerozturk[Türker Öztürk]

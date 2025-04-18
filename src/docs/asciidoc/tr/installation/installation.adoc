@@ -1,0 +1,223 @@
+== Kurulum
+:source-highlighter: rouge
+:docinfo: shared
+:icons: font
+
+
+
+
+
+:httpportnumber: 8081
+
+Yazılım bileşenlerinde sürüm farklarından dolayı(sürümlerin eski veya yeni olması) sorun yaşanabiliyor.
+
+=== Java Sürümünün Kontrolü
+
+
+
+
+
+
+
+
+
+
+//https://github.com/verhas/jamal/tree/f461c1f36b9c99ca71472becb2ab79c7e7d599a7/jamal-yaml
+
+
+
+// https://github.com/search?q=repo%3Averhas%2Fjamal%20%40include&type=code
+
+`pom.xml` dosyasında belirtilen Java sürümü `17` olduğundan;
+
+- Sistem ortam değişkeni olan `JAVA_HOME` da aynı sürümde bir Java kurulum klasör yolunu göstermelidir.
+
+ java -version
+
+- IntelliJ IDEA Community Edition içinden çalıştırılacaksa, aşağıdaki menü yolu takip edilerek, sürümü `17` olan bir Java seçilmelidir:
++
+.menü yolu
+----
+IntelliJ IDEA
+  File
+    Project Structure
+      Project Settings
+        Project
+          SDK
+----
+
+=== Dosyaları indirmek
+
+[IMPORTANT]
+Kaynak kodlar linkte herkese açık olmayan depoda bulunuyor olabilir. Dolayısıyla erişim yetkiniz yok ise bu belgede anlatılan kurulum işlemlerini yapmanız mümkün olmayabilir.
+
+
+- Dosyaları depodan klonlamak için link:https://git-scm.com/[git] kurulu olmalıdır. Kuruluysa boş bir klasörde konsoldan aşağıdaki komut çalıştırılır.
++
+:gitrepository: https://github.com/turkerozturk/SweetCherrySync
++
+[source, console, subs="attributes+"]
+-----
+git clone {gitrepository}.git
+-----
+- Veya dosya internet gezgini aracılığıyla {gitrepository}/archive/refs/heads/main.zip adresinden arşiv dosyası olarak indirilip içindeki dosyalar arşivden çıkarılır.
+
+
+=== Kaynak koddan derlemek
+
+`SweetCherrySync` klasöründe konsol penceresi açılır. Aşağıdaki komut çalıştırılır.
+
+.windows
+ mvnw.cmd clean install
+
+.linux
+ ./mvnw clean install
+
+[NOTE]
+Bu komut, projenin `.mvn/wrapper/maven-wrapper.properties` dosyasında yazılı olan Maven sürümünü
+(sistemde bulamazsa, `KULLANICININ EV DİZİNİ/.m2/wrapper/dists` klasörüne indirdikten sonra temiz bir derleme işlemi yapar(varsa önceki derleme klasörünü kaldırır).
+
+[WARNING]
+Linux işletim sisteminde mwnv komutunun çalışabilmesi için, bir kereliğine `chmod +x mvnw` komutu verilerek dosyanın çalıştırılabilir olduğunu belirtmek gerekir.
+
+:compiled-jar-file: SweetCherrySync-1.0.0.jar
+
+İşlem sonucunda derlenen proje, proje dizininde oluşan `target` dizininde JAR dosyası halinde bulunmaktadır.
+
+JAR dosyası `{compiled-jar-file}` adıyla oluşur.
+
+
+
+
+
+=== Çalıştırmadan Önce Port Numarası Kontrolü
+
+[TIP]
+Sonraki başlıktan devam edebilirsiniz. Uygulamanız çalışmazsa, bu başlığa geri dönüp port kontrolü ve gerekirse uygulama ayarı yapıp tekrar deneyebilirsiniz.
+
+==== Eğer port numarasını kullanan başka uygulama varsa
+
+Kullanılmayan port numarası deneme yanılma metodu ile veya konsol komutu ile bulunabilir. Uygulamanın varsayılan olarak kullandığı portların boş olup olmadığını kontrol etmek için:
+
+
+
+
+[source,console, subs="attributes+"]
+.windows cmd
+----
+netstat -ano -p tcp |find "{httpportnumber}"
+----
+
+Komutlarının çıktısında,
+[listing, subs="attributes,normal"]
+----
+TCP    0.0.0.0:{httpsportnumber}            0.0.0.0:0              LISTENING       *PID numarası*
+----
+
+ve
+
+[listing, subs="attributes,normal"]
+----
+TCP    0.0.0.0:{httpportnumber}            0.0.0.0:0              LISTENING       *PID numarası*
+----
+
+görünüyorsa, bu durumda port doludur ve uygulamamızı çalıştırmak için ya o portu kullanan uygulamayı bulup sonlandırmak, veya uygulamamızın port numarasını değiştirmek gereklidir.
+
+[NOTE]
+Linux için aynı işi gören komutlar; +
+`sudo netstat -ano -p tcp` +
+ve +
+`ps -ef | grep *PID numarası*`
+
+==== PID'den işlemi bulma
+
+Eğer belirli bir PID (Process ID) üzerinden hangi uygulamanın bu portu kullandığını öğrenmek isterseniz, şu komutu kullanabilirsiniz:
+
+[listing, subs="attributes,normal"]
+----
+tasklist |find "*PID numarası*"
+----
+
+Bu komut, ilgili işlemin adını gösterecektir.
+
+Hiçbir çıktı göstermediyse port boşta demektir ve bu da uygulamamızın bu portu kullanarak sorunsuz çalışacağı anlamına gelir.
+
+==== Farklı Port Numaraları Kullanılmak İstenirse
+
+Sistemde kulanılmayan farklı bir port numarasını `application.yml` dosyasında belirtmek gerekir.
+
+- Proje, kaynak kodundan çalıştırılacaksa dosyanın konumu `*PROJEKLASÖRÜ*/src/main/resources/application.yml` olur.
+
+- Proje, JAR dosyası olarak çalıştırılacaksa, JAR dosyası ile aynı klasörde bir `application.yml` dosyası oluşturulmalıdır. Satır başlarından itibaren boşluk karakterleri aynı olmalıdır.
+
+
+
+
+[source, yaml, subs="attributes+"]
+.application.yml dosyası içinde olması gereken kısım
+----
+server:
+  port: {httpportnumber} # <.>
+
+
+----
+
+<.> HTTP port numarası
+
+=== Projenin Çalıştırılması
+
+==== Kaynak Koddan Çalıştırmak
+
+Derlenmemiş proje, proje klasörünün içinde bulunan `mvnw` dosyasının bulunduğu yerde konsol penceresinde aşağıdaki komutla çalıştırılır.
+
+.windows cmd konsolunda
+ mvnw.cmd spring-boot:run
+
+.linux terminalinde veya windows powershell konsolunda
+ ./mvnw spring-boot:run
+
+==== Derlenmiş Dosyayı Çalıştırmak
+
+Derlenmiş proje aşağıdaki komutla çalıştırılır.
+
+[source,console, subs="attributes+"]
+.windows cmd
+----
+ java -jar `{compiled-jar-file}`
+----
+
+[WARNING]
+Derlenmiş JAR dosyasını çalıştırırken dikkat edilmesi gereken, dosya hangi klasörün içindeyse konsolda da o klasördeyken çalıştırmaktır. Aksi halde uygulama çalışmaya başladıktan sonra kullanım esnasında ihtiyaç duyduğu dosya ve klasör konumlarında sorun yaşayacaktır.
+
+
+=== Web Gezgini İle Giriş Yapmak
+
+
+Giriş `https://localhost:{httpportnumber}` sayfasından yapılır.
+
+Websayfası sadece istatistik bilgi içerir, senkronizasyon için gerekli değildir, webserver özelliği devredışı bırakılabilir.
+
+[source, yaml, subs="attributes+"]
+.application.yml dosyası içinde olması gereken kısım (enable disable embedded tomcat)
+----
+spring:
+  main:
+    web-application-type: servlet # <.>
+
+
+----
+
+<.> Varsayılan değer `servlet`, devredışı bırakılmak istenirse `none`.
+
+---
+
+=== Kaynaklar
+
+- link:https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository[Cloning a repository]
+
+- link:https://www.baeldung.com/maven-wrapper[A Quick Guide to Maven Wrapper]
+
+- link:https://www.ysoft.com/knowledge/determine-which-program-uses-or-blocks-a-port[Determine Which Program Uses or Blocks a Port]
+
+---
+Author: link:https://github.com/turkerozturk[Türker Öztürk]

@@ -1,0 +1,74 @@
+== DATABASE CONNECTION EXAMPLES
+
+To avoid data loss, always keep a backup of your CTB database file on a secure storage device.
+
+Create a file named *application.yml* in the application directory and paste the following code snippet starting with "from" and one of the code snippets starting with "destination" into it with line indents.
+
+Replace the variable values with your own database connection information that you should have tested before and save.
+
+When you start the application, the synchronization process will be from the database you specified with *"from"* to the database you specified with *"destination"*.
+
+=== SOURCE OPTIONS
+
+==== EXAMPLE - SOURCE DATABASE IS SQLITE
+
+[source,yaml]
+----
+include::../../../main/resources/application.yml[tag=fromDatabase]
+----
+
+
+=== DESTINATION OPTIONS
+
+Use one of the following destination datasource options. Uncomment all lines(remove the first # on each line) except the first line.
+
+Except the SQLite option, for the other options you need to create an empty database, adjust access permissions, test the connection using console commands or with their database management software.
+
+==== EXAMPLE - DESTINATION IS SQLITE
+
+[source,yaml]
+----
+include::../../../main/resources/application.yml[tag=destinationIsSqlite]
+----
+
+Don't forget to place the *schema-sqlite.sql* file in the same folder as the application!
+
+==== EXAMPLE - DESTINATION IS MYSQL
+
+[source,yaml]
+----
+include::../../../main/resources/application.yml[tag=destinationIsMysql]
+----
+
+Don't forget to place the *schema-mysql.sql* file in the same folder as the application!
+
+It's up to you to further optimize the data structures in the *schema-mysql.sql* file.
+
+==== EXAMPLE - DESTINATION IS POSTGRESQL
+
+[source,yaml]
+----
+include::../../../main/resources/application.yml[tag=destinationIsPostgresql]
+----
+
+Don't forget to place the *schema-postgresql.sql* file in the same folder as the application!
+
+It's up to you to further optimize the data structures in the *schema-postgresql.sql* file.
+
+==== EXAMPLE - DESTINATION IS SQLSERVER
+
+[source,yaml]
+----
+include::../../../main/resources/application.yml[tag=destinationIsMssql]
+----
+
+Don't forget to place the *schema-mssql.sql* file in the same folder as the application!
+
+It's up to you to further optimize the data structures in the *schema-mssql.sql* file.
+
+==== ADDITIONAL INFO
+
+For a bit more information, you can also read the comments in the application.yml file in the source code.
+
+---
+Author: link:https://github.com/turkerozturk[Türker Öztürk]

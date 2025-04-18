@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <title>Settings Tablosu</title>
+    <!-- Bootstrap CSS -->
+    <link
+            href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+            rel="stylesheet"
+    >
+</head>
+<body>
+
+<div class="container mt-5">
+    <table class="table table-bordered table-striped">
+        <caption>Database Synchronization Information</caption>
+
+        <thead>
+        <tr>
+            <th>NAME</th>
+            <th>FROM</th>
+            <th>DESTINATION</th>
+            <th>CREATED</th>
+            <th>UPDATED</th>
+            <th>DELETED</th>
+        </tr>
+        </thead>
+        <tbody>
+        <!-- ROW 1: Node -->
+        <tr>
+            <td>Node</td>
+            <!-- fromNodeCount -->
+            <td th:text="${settingsMap['fromNodeCount']}">0</td>
+            <!-- destinationNodeCount -->
+            <td th:text="${settingsMap['destinationNodeCount']}">0</td>
+            <!-- createdNodes -->
+            <td th:text="${settingsMap['createdNodes'] ?: 0}">0</td>
+            <!-- updatedNodes (Tabloda görünmüyorsa DB'de henüz olmayabilir, 0 verelim) -->
+            <td th:text="${settingsMap['updatedNodes'] ?: 0}">0</td>
+            <!-- deletedNodes -->
+            <td th:text="${settingsMap['deletedNodes'] ?: 0}">0</td>
+        </tr>
+
+        <!-- ROW 2: Children -->
+        <tr>
+            <td>Children</td>
+            <td th:text="${settingsMap['fromChildrenCount']}">0</td>
+            <td th:text="${settingsMap['destinationChildrenCount']}">0</td>
+            <td th:text="${settingsMap['createdChildren'] ?: 0}">0</td>
+            <td th:text="${settingsMap['updatedChildren'] ?: 0}">0</td>
+            <td th:text="${settingsMap['deletedChildren'] ?: 0}">0</td>
+        </tr>
+
+        <!-- ROW 3: Bookmark -->
+        <tr>
+            <td>Bookmark</td>
+            <td th:text="${settingsMap['fromBookmarkCount']}">0</td>
+            <td th:text="${settingsMap['destinationBookmarkCount']}">0</td>
+            <!-- createdBookmark DB’de var/yok, yoksa 0 gözükür -->
+            <td th:text="${settingsMap['createdBookmark'] ?: 0}">0</td>
+            <td th:text="${settingsMap['updatedBookmark'] ?: 0}">0</td>
+            <td th:text="${settingsMap['deletedBookmark'] ?: 0}">0</td>
+        </tr>
+
+        <!-- ROW 4: Image -->
+        <tr>
+            <td>Image</td>
+            <td th:text="${settingsMap['fromImageCount']}">0</td>
+            <td th:text="${settingsMap['destinationImageCount']}">0</td>
+            <td th:text="${settingsMap['createdImages'] ?: 0}">0</td>
+            <td th:text="${settingsMap['updatedImages'] ?: 0}">0</td>
+            <td th:text="${settingsMap['deletedImages'] ?: 0}">0</td>
+        </tr>
+
+        <!-- ROW 5: Grid -->
+        <tr>
+            <td>Grid</td>
+            <td th:text="${settingsMap['fromGridCount']}">0</td>
+            <td th:text="${settingsMap['destinationGridCount']}">0</td>
+            <td th:text="${settingsMap['createdGrids'] ?: 0}">0</td>
+            <td th:text="${settingsMap['updatedGrids'] ?: 0}">0</td>
+            <td th:text="${settingsMap['deletedGrids'] ?: 0}">0</td>
+        </tr>
+
+        <!-- ROW 6: CodeBox -->
+        <tr>
+            <td>CodeBox</td>
+            <td th:text="${settingsMap['fromCodeBoxCount']}">0</td>
+            <td th:text="${settingsMap['destinationCodeBoxCount']}">0</td>
+            <td th:text="${settingsMap['createdCodeBoxes'] ?: 0}">0</td>
+            <td th:text="${settingsMap['updatedCodeBoxes'] ?: 0}">0</td>
+            <td th:text="${settingsMap['deletedCodeBoxes'] ?: 0}">0</td>
+        </tr>
+        </tbody>
+    </table>
+</div>
+
+</body>
+</html>
