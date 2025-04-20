@@ -65,6 +65,11 @@ spring:
     hibernate:
       ddl-auto: none
     show-sql: true
+  # asagida h2 alt keyler olmasa da <localhost:port>/h2-console calisir. Fakat derlenmis JAR'da da calismasi icin lazim.
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
 
 ########################################################################################################################
 ## BELOW ARE THE DEFAULT EXAMPLE CONNECTION SETTINGS FOR 4 DIFFERENT DATABASES.
