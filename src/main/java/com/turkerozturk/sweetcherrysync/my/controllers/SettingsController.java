@@ -44,6 +44,9 @@ public class SettingsController {
      * @param model
      * @return
      */
+    @Autowired
+    private com.turkerozturk.sweetcherrysync.services.SyncService syncService;
+
     @GetMapping("/")
     public String showSettings(Model model) {
         // Tüm ayarları çekelim
@@ -57,6 +60,7 @@ public class SettingsController {
 
         // Thymeleaf’e ekleyelim
         model.addAttribute("settingsMap", settingsMap);
+        model.addAttribute("syncStatus", syncService.getStatus());
 
         return "index";  // resources/templates/settings.html
     }

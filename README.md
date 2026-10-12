@@ -4,7 +4,13 @@ Developer: Türker Öztürk
 
 License: GPL 3.0
 
-CTB database with CherryTree Version 1.1.3 is supported (without any responsibility).
+CherryTree table schemas are checked at runtime. Older children tables without master_id are supported for ordinary nodes. Source and destination may be different JDBC database types.
+
+## One-way reliability changes (source build)
+
+See [reliability guide (TR)](documentation/reliability_tr.md) for the atomic
+snapshot transfer, deletion guards, read-only source, tests, and remaining limits.
+The old compiled release below does **not** contain these changes.
 
 ## Download URL of Compiled Version
 
@@ -13,9 +19,9 @@ https://github.com/turkerozturk/SweetCherrySync/releases/download/1.0.0/sweetche
 
 ## Description
 
-My unofficial software called SweetCherrySync is used to read data from the SQLite database file with the CTB extension of [CherryTree](https://github.com/giuspen/cherrytree) hierarchical note-taking software at regular intervals and then transfer changes such as creation, editing, and deletion to a second database specified as the target.
+My unofficial software called SweetCherrySync is used to read data from a source JDBC database containing the table structure of [CherryTree](https://github.com/giuspen/cherrytree) hierarchical note-taking software at regular intervals and then transfer changes such as creation, editing, and deletion to a second database specified as the target.
 
-The target database can be located on the same computer or on a machine on the network.
+Both source and target databases can be located on the same computer or on a machine on the network. SQLite CTB files are supported, with additional file-level read-only protection for SQLite sources.
 
 The target database does not have to be SQLite. If there is a suitable database schema and library (I have prepared three additional types), it can be other database structures supported by the Java Spring Boot Framework.
 

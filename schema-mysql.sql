@@ -1,14 +1,14 @@
-CREATE TABLE IF NOT EXISTS bookmark (node_id INTEGER UNIQUE,sequence INTEGER);
+CREATE TABLE IF NOT EXISTS bookmark (node_id INTEGER UNIQUE,sequence INTEGER) ENGINE=InnoDB;
 
-CREATE TABLE IF NOT EXISTS children (node_id INTEGER UNIQUE,father_id INTEGER,sequence INTEGER,master_id INTEGER);
+CREATE TABLE IF NOT EXISTS children (node_id INTEGER UNIQUE,father_id INTEGER,sequence INTEGER,master_id INTEGER) ENGINE=InnoDB;
 
-CREATE TABLE IF NOT EXISTS codebox (node_id INTEGER,offset INTEGER,justification TEXT,txt LONGTEXT,syntax TEXT,width INTEGER,height INTEGER,is_width_pix INTEGER,do_highl_bra INTEGER,do_show_linenum INTEGER);
+CREATE TABLE IF NOT EXISTS codebox (node_id INTEGER,offset INTEGER,justification TEXT,txt LONGTEXT,syntax TEXT,width INTEGER,height INTEGER,is_width_pix INTEGER,do_highl_bra INTEGER,do_show_linenum INTEGER) ENGINE=InnoDB;
 
-CREATE TABLE IF NOT EXISTS grid (node_id INTEGER,offset INTEGER,justification TEXT,txt LONGTEXT,col_min INTEGER,col_max INTEGER);
+CREATE TABLE IF NOT EXISTS grid (node_id INTEGER,offset INTEGER,justification TEXT,txt LONGTEXT,col_min INTEGER,col_max INTEGER) ENGINE=InnoDB;
 
-CREATE TABLE IF NOT EXISTS image (node_id INTEGER,offset INTEGER,justification TEXT,anchor TEXT,png MEDIUMBLOB,filename TEXT,link TEXT,time INTEGER);
+CREATE TABLE IF NOT EXISTS image (node_id INTEGER,offset INTEGER,justification TEXT,anchor TEXT,png MEDIUMBLOB,filename TEXT,link TEXT,time INTEGER) ENGINE=InnoDB;
 
-CREATE TABLE IF NOT EXISTS node (node_id INTEGER UNIQUE,name TEXT,txt LONGTEXT,syntax TEXT,tags TEXT,is_ro INTEGER,is_richtxt INTEGER,has_codebox INTEGER,has_table INTEGER,has_image INTEGER,level INTEGER,ts_creation INTEGER,ts_lastsave INTEGER);
+CREATE TABLE IF NOT EXISTS node (node_id INTEGER UNIQUE,name TEXT,txt LONGTEXT,syntax TEXT,tags TEXT,is_ro INTEGER,is_richtxt INTEGER,has_codebox INTEGER,has_table INTEGER,has_image INTEGER,level INTEGER,ts_creation INTEGER,ts_lastsave INTEGER) ENGINE=InnoDB;
 
 -- https://www.digitalocean.com/community/tutorials/sqlite-vs-mysql-vs-postgresql-a-comparison-of-relational-database-management-systems
 -- * MEDIUMBLOB: A blob column with a maximum length of 16777215 (2^24 - 1) bytes of data.

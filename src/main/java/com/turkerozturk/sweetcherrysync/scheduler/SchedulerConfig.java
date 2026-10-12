@@ -35,6 +35,7 @@ import java.util.Date;
 
 @Configuration
 @EnableScheduling
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name = "my.scheduler.enabled", havingValue = "true", matchIfMissing = true)
 public class SchedulerConfig {
 
     private static final Logger logger = LoggerFactory.getLogger(SchedulerConfig.class);
@@ -100,8 +101,14 @@ public class SchedulerConfig {
         Date dateStart = new Date();
         System.out.println(dateFormat.format(dateStart));
 
-        myService.resetStatistics();
-        syncService.syncNodes();
+        try {
+            syncService.syncNodes();
+        } catch (SyncService.SyncBusyException e) {
+            logger.info("Scheduled synchronization skipped: a run is already active.");
+        } catch (RuntimeException e) {
+            logger.error("Scheduled synchronization failed; the next interval will retry.", e);
+            return;
+        }
 
 
 

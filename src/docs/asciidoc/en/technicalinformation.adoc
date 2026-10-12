@@ -4,10 +4,10 @@ Türker Öztürk
 
 [qanda]
 Which CherryTree file structures are supported?::
-Only the files with the CTB extension are supported. Actually they are SQLite database files.
+The source and destination may use different JDBC databases with the supported CherryTree table structure. SQLite CTB files are one supported source type.
 
 Which CherryTree versions are supported?::
-Version 1.1.3 is supported (without any responsibility).
+Schema compatibility is checked at runtime. The older children table without master_id is supported for ordinary nodes; shared nodes require master_id in the destination.
 +
 You need to be careful, because a new version can modify your database structure.
 +
@@ -51,7 +51,7 @@ First you need to have your application.yml file with your desired settings. The
 +
 Run by typing;
 +
- java -jar SweetCherrySync.java
+ java -jar target/sweetcherrysync-1.0.0.jar
 +
 command.
 + If you want to compile it from source, read my general installation page.
@@ -83,7 +83,7 @@ You need to refresh the page manually.
 For each beginning of the sync interval, MyService.java resetStatistics() method resets all comparison counters.
 +
 Some counters need to be tested or have logical misinformation.
-But looking to the table row counters and seeing their equality can make you satisfied.
+Counters describe the last successful commit. Content is also verified before commit.
 
 Where are those counters and the other keys value pairs are stored?::
 Examine the application.yml file inside the project source.
@@ -113,27 +113,19 @@ If you set the database name to SweetCherrySync, on your filesystem you will see
 because it adds ".mv.db" automatically.
 
 Can I sync manually with a command?::
-Yes.
+Yes. Use the main page button or an HTTP POST request:
 +
-NodeController.java is responsible for that.
+ curl -X POST http://127.0.0.1:8081/sync
 +
-add /sync to your server URL and type enter.
+GET /sync no longer starts synchronization. GET /sync/status reports the last run.
+Concurrent calls receive HTTP 409. Disable automatic synchronization by setting
+`my.scheduler.enabled=false`; no scheduled startup run is then performed.
 +
-Example:
+See link:../../../../documentation/reliability_tr.md[the reliability guide]
+for deletion guards, schema checks, transactional transfer and remaining limitations.
 +
- http://localhost:8081/sync
-+
-It will call the synching method.
-+
-Because there is no setting to disable the scheduler, as a workaround, set its value to very high as seconds. (ugly solution).
-+
-But this way the application runs a sync during startup too.
-+
-Or wait until I develop a better solution or develop for yourself.
-+
-I dont know what will happen if you call it manually during scheduled sync.
-+
-Always do regular backups using the backup settings feature of the CherryTree application or do it manually.
+Keep independent versioned backups. The destination is a dedicated mirror,
+not a historical backup and not a two-way editing workspace.
 
 How the SweetCherrySync software can differentiate source and destination databases technically?::
 In a normal situation, Java Spring Boot application is configured for a single database by default.

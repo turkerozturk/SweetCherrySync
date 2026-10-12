@@ -84,8 +84,14 @@ public class DestinationDataSourceConfig {
     @Value("${destination.datasource.schema}")
     private String destinationDbSchema;
 
+    @Value("${from.datasource.url}")
+    private String sourceDbUrl;
+
     @Bean(name = "destinationDataSource")
     public DataSource destinationDataSource() {
+        if (com.turkerozturk.sweetcherrysync.services.SyncService.sameSqliteFile(sourceDbUrl, destinationDbUrl)) {
+            throw new IllegalArgumentException("Source and destination must be different files");
+        }
         return DataSourceBuilder.create()
                 .url(destinationDbUrl)
                 .driverClassName(destinationDbDriverClassName)

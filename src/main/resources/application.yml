@@ -1,5 +1,6 @@
 server:
   port: 8081
+  address: 127.0.0.1
 
 # You dont need to change this H2 database settings.
 # this database is for storing various keys and values during application run. (string hepsi).
@@ -21,6 +22,7 @@ my:
     init-mode: always
     ddl-auto: create
   scheduler:
+    enabled: true
     # using in SchedulerConfig.java -> syncDatabases()
     delayInSeconds: 60
 
@@ -68,7 +70,7 @@ spring:
   # asagida h2 alt keyler olmasa da <localhost:port>/h2-console calisir. Fakat derlenmis JAR'da da calismasi icin lazim.
   h2:
     console:
-      enabled: true
+      enabled: false
       path: /h2-console
 
 ########################################################################################################################
@@ -85,7 +87,7 @@ spring:
 from:
   datasource:
     dialect: org.hibernate.community.dialect.SQLiteDialect
-    url: jdbc:sqlite:C:/Users/username/Desktop/mydatabase.ctb
+    url: jdbc:sqlite:tmp.ctb
     driver-class-name: org.sqlite.JDBC
     username:
     password:
@@ -103,15 +105,15 @@ from:
 
 # tag::destinationIsSqlite[]
 # SQLITE
-#destination:
-#  datasource:
-#    dialect: org.hibernate.community.dialect.SQLiteDialect
-#    url: jdbc:sqlite:tmp.ctb
-#    driver-class-name: org.sqlite.JDBC
-#    username:
-#    password:
-#    init-mode: always
-#    schema: schema-sqlite.sql
+destination:
+  datasource:
+    dialect: org.hibernate.community.dialect.SQLiteDialect
+    url: jdbc:sqlite:tmp2.ctb
+    driver-class-name: org.sqlite.JDBC
+    username:
+    password:
+    init-mode: always
+    schema: schema-sqlite.sql
 # end::destinationIsSqlite[]
 
 # tag::destinationIsMysql[]
@@ -171,3 +173,8 @@ from:
 
 
 
+
+# Destination is a dedicated mirror. Deletions above this node percentage are blocked.
+sync:
+  max-delete-percent: 20
+  allow-empty-source: false

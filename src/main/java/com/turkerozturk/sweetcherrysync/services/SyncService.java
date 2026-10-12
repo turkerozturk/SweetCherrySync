@@ -20,337 +20,279 @@
  */
 package com.turkerozturk.sweetcherrysync.services;
 
-
-import com.turkerozturk.sweetcherrysync.entities.Node;
-import com.turkerozturk.sweetcherrysync.my.enums.Statistics;
 import com.turkerozturk.sweetcherrysync.my.services.MyService;
-import com.turkerozturk.sweetcherrysync.repositories.DestinationNodeRepository;
-import com.turkerozturk.sweetcherrysync.repositories.FromNodeRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.JdbcTransactionManager;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
-import java.lang.reflect.Field;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import javax.sql.DataSource;
+import java.math.BigDecimal;
+import java.sql.*;
+import java.time.Instant;
+import java.util.*;
+import java.util.concurrent.locks.ReentrantLock;
 
+/** One source snapshot, one atomic destination transaction. No timestamp-only shortcuts. */
 @Service
 public class SyncService {
+    private static final Logger log = LoggerFactory.getLogger(SyncService.class);
+    static final List<Table> TABLES = List.of(
+        new Table("node", "Node", "Nodes", 1, "node_id,name,txt,syntax,tags,is_ro,is_richtxt,has_codebox,has_table,has_image,level,ts_creation,ts_lastsave"),
+        new Table("children", "Children", "Children", 1, "node_id,father_id,sequence,master_id"),
+        new Table("bookmark", "Bookmark", "Bookmark", 1, "node_id,sequence"),
+        new Table("codebox", "CodeBox", "CodeBoxes", 2, "node_id,offset,justification,txt,syntax,width,height,is_width_pix,do_highl_bra,do_show_linenum"),
+        new Table("grid", "Grid", "Grids", 2, "node_id,offset,justification,txt,col_min,col_max"),
+        new Table("image", "Image", "Images", 2, "node_id,offset,justification,anchor,png,filename,link,time"));
 
-    private static final Logger logger = LoggerFactory.getLogger(SyncService.class);
+    record Table(String name, String countName, String counterName, int keys, String csv) {
+        List<String> columns() { return List.of(csv.split(",")); }
+    }
+    public record Status(String state, Instant startedAt, Instant finishedAt, String message) {}
+    private volatile Status status = new Status("IDLE", null, null, "No synchronization has run yet.");
+    private final ReentrantLock lock = new ReentrantLock();
+    private final JdbcTemplate source;
+    private final JdbcTemplate destination;
+    private final TransactionTemplate sourceTransaction;
+    private final TransactionTemplate destinationTransaction;
+    private final MyService statistics;
+    private final int maxDeletePercent;
+    private final boolean allowEmptySource;
 
-    @Autowired
-    private FromNodeRepository fromRepository;
-
-    @Autowired
-    private DestinationNodeRepository destinationRepository;
-
-    @Autowired
-    private GridService gridService;
-
-    @Autowired
-    private CodeBoxService codeBoxService;
-
-    @Autowired
-    private ImageService imageService;
-
-    @Autowired
-    private ChildrenService childrenService;
-
-    @Autowired
-    private BookmarkService bookmarkService;
-
-    @Autowired
-    private NodeService nodeService;
-
-    @Autowired
-    private MyService myService;
-
-    @Autowired
-    private FromRecordCountService fromRecordCountService;
-
-    @Autowired
-    private DestinationRecordCountService destinationRecordCountService;
-
-    public List<Node> getAllFromNodes() {
-        return fromRepository.findAll();
+    public SyncService(@Qualifier("fromDataSource") DataSource from,
+                       @Qualifier("destinationDataSource") DataSource to,
+                       MyService statistics,
+                       @Value("${sync.max-delete-percent:20}") int maxDeletePercent,
+                       @Value("${sync.allow-empty-source:false}") boolean allowEmptySource) {
+        if (maxDeletePercent < 0 || maxDeletePercent > 100) {
+            throw new IllegalArgumentException("sync.max-delete-percent must be between 0 and 100");
+        }
+        this.source = new JdbcTemplate(from);
+        this.destination = new JdbcTemplate(to);
+        this.statistics = statistics;
+        this.maxDeletePercent = maxDeletePercent;
+        this.allowEmptySource = allowEmptySource;
+        sourceTransaction = new TransactionTemplate(new JdbcTransactionManager(from));
+        sourceTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
+        sourceTransaction.setReadOnly(true);
+        destinationTransaction = new TransactionTemplate(new JdbcTransactionManager(to));
+        destinationTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
     }
 
-    public List<Node> getAllDestinationNodes() {
-        return destinationRepository.findAll();
-    }
+    public Status getStatus() { return status; }
 
-    public void saveToDestination(Node node) {
-        destinationRepository.save(node);
-    }
-
-    public void deleteFromDestination(Node node) {
-        destinationRepository.delete(node);
-    }
-
-    public void syncNode(Node fromNode) {
-
-
-        // Ekleme ve güncelleme işlemleri
-
-        syncCreateOrUpdateNodeWithRelationships(fromNode);
-
-
-        // Silme işlemi
-
-        //   syncDeleteNodeWithRelationships(destinationNode);
-
-
-    }
-
-
-    /**
-     *
-     */
     public void syncNodes() {
-
-
-        // bilgi: Yeni eklenmis veya guncellenmis dugumleri siralamada en basa alarak getiriyoruz.
-        logger.info("başla fromRepository.findAllOrderedByNodeIdAndTsLastsave");
-        List<Node> fromNodes = fromRepository.findAllOrderedByNodeIdAndTsLastsave();
-
-        logger.info("başla destinationRepository.findAllOrderedByNodeIdAndTsLastsave");
-        List<Node> destinationNodes = destinationRepository.findAllOrderedByNodeIdAndTsLastsave();
-
-
-        logger.info("başla syncNodes");
-
-        // bilgi: Bookmark sayısı az olduğuudan bağımsız tablo olarak senkronize etmeyi tercih ettim.
-        bookmarkService.syncNodes();
-
-        // bilgi: diger sync işlemleri node tablosu ile bağlantılı olarak yapılıyor çünkü sadece onda primary id ve
-        //  güncelleme tarihi var.
-        logger.info("başla Node fromNode : fromNodes");
-
-        // bilgi: önce kaynakta yeni veya güncellenmiş düğüm varsa hedefi senkronize ediyoruz.
-        // Ekleme ve güncelleme işlemleri
-        for (Node fromNode : fromNodes) {
-//logger.info("f: " + fromNode.getNodeId());
-//            logger.info("d: " + fromNode.getNodeId());
-            myService.increment(Statistics.NODE_COUNTER.getValue());
-
-            syncNode(fromNode);
-
-        }
-        logger.info("başla Node destinationNode : destinationNodes");
-
-        // bilgi: sonra hedefte fazla node ler varsa onları ve bağlantılı tablolardaki verileri siliyoruz.
-        // Silme işlemi
-        for (Node destinationNode : destinationNodes) {
-
-            syncDeleteNodeWithRelationships(destinationNode);
-
-        }
-        logger.info("başla updateChangedIdNumbers");
-        // bilgi dugumlerin siralamasi degisince node tablosunda degisiklik olmuyor ama children tablosunda oluyor.
-        // bilgi o degisikligi yakalamak ve senkrnizasyonu yapmak icin asdagidaki metod var.
-        childrenService.updateChangedIdNumbers();
-        // bilgi bir sonraki metod tum tabloyu hallediyor ama cirkin oldu, bu iki metodu tekrar dusun,
-        //  daha iyi bir yontem olabilir mi diye. Ama verileri dogru senkronize eder asagidaki. Yani mantikli birsey
-        //  yapacagim derken veri kaybina yolacama, birak boyle kalsin!
-
-        logger.info("başla syncSharedNodesInRealityAllChildrenTable");
-
-        // bilgi asagidaki aslinda tum children tablosunu esitliyor.
-        //  cunku shared node varsa bska turlu anlayamayiz. Sadece bu tabloda fazladan bir kayit olur.
-        //  ve shared node sadece olustururken degil, ana nodede degisiklik olursa da degiseceginden bence
-        //  tum tabloyu guncellemek simdilik mantikli.
-        childrenService.syncSharedNodesInRealityAllChildrenTable();
-
-        // bilgi her iki dbdeki tablolarin satir sayilarini my db ye yazar.
-        fromRecordCountService.printAndSaveRecordCounts();
-        destinationRecordCountService.printAndSaveRecordCounts();
-
-        myService.printAllSettings();
-
-        boolean imagesOk = myService.areValuesEqual(Statistics.FROM_IMAGE_COUNT.getValue(), Statistics.DESTINATION_IMAGE_COUNT.getValue());
-        if (!imagesOk) {
-            logger.warn("Image table must be sync deeply");
-            imageService.syncAllMissingIds();
-        }
-
-        boolean gridsOk = myService.areValuesEqual(Statistics.FROM_GRID_COUNT.getValue(), Statistics.DESTINATION_GRID_COUNT.getValue());
-        if (!gridsOk) {
-            logger.warn("Grid table must be sync deeply");
-            gridService.syncAllMissingIds();
-        }
-
-        boolean codeBoxesOk = myService.areValuesEqual(Statistics.FROM_CODE_BOX_COUNT.getValue(), Statistics.DESTINATION_CODE_BOX_COUNT.getValue());
-        if (!codeBoxesOk) {
-            logger.warn("CodeBox table must be sync deeply");
-            codeBoxService.syncAllMissingIds();
-        }
-
-        boolean bookmarksOk = myService.areValuesEqual(Statistics.FROM_BOOKMARK_COUNT.getValue(), Statistics.DESTINATION_BOOKMARK_COUNT.getValue());
-        if (!bookmarksOk) {
-            logger.warn("Bookmark table must be sync deeply");
-            bookmarkService.syncAllMissingIds();
-        }
-
-        boolean childrenOk = myService.areValuesEqual(Statistics.FROM_CHILDREN_COUNT.getValue(), Statistics.DESTINATION_CHILDREN_COUNT.getValue());
-        if (!childrenOk) {
-            logger.warn("Children table must be sync deeply");
-            childrenService.syncAllMissingIds();
-        }
-
-        boolean nodesOk = myService.areValuesEqual(Statistics.FROM_NODE_COUNT.getValue(), Statistics.DESTINATION_NODE_COUNT.getValue());
-        if (!nodesOk) {
-            logger.warn("Node table must be sync deeply");
-            nodeService.syncAllMissingIds();
-        }
-
-        fromRecordCountService.printAndSaveRecordCounts();
-        destinationRecordCountService.printAndSaveRecordCounts();
-
-        myService.printAllSettings();
-
-
-    }
-
-
-    public void syncCreateOrUpdateNodeWithRelationships(Node fromNode) {
-
-        Integer nodeId = fromNode.getNodeId();
-
-        Node destinationNode = destinationRepository.findById(nodeId).orElse(null);
-        boolean isNewNode = (destinationNode == null);
-
-        if (isNewNode) {
-            logger.info("new node: " + nodeId + ", " + fromNode.getName());
-            destinationRepository.save(fromNode);
-            myService.increment(Statistics.CREATED_NODES.getValue());
-
-            childrenService.syncCreateRow(nodeId);
-
-
-            gridService.syncCreateRecords(nodeId);
-            codeBoxService.syncCreateRecords(nodeId);
-            imageService.syncCreateRecords(nodeId);
-
-
-        } else if (!fromNode.getTsLastsave().equals(destinationNode.getTsLastsave())) {
-            // bilgi: yukaridaki condition, isModifiedNode diye yazilsa iyi olurdu ama o zaman destination node bazen
-            //  null olabileceginden yaamiyoruz, oyle yazsak daha anlasilir olurdu. Fakat bu sekilde biraktik mecburen.
-            logger.info("changed node: " + nodeId + ", " + fromNode.getName());
-
-/*
-            Map<String, Object[]> differences = getWhatIsChanged(fromNode, destinationNode);
-            int crop = 20;
-
-            for (Map.Entry<String, Object[]> entry : differences.entrySet()) {
-                String value = entry.getValue()[0].toString();
-                String truncatedValue = null;
-                if (value.length() > crop) {
-                    truncatedValue = value.substring(0, crop);
-                } else {
-                    truncatedValue = value;
-                }
-
-                String value2 = (String) entry.getValue()[1].toString();
-                String truncatedValue2 = null;
-                if (value2.length() > crop) {
-                    truncatedValue2 = value2.substring(0, crop);
-                } else {
-                    truncatedValue2 = value2;
-                }
-
-                System.out.println(fromNode.getNodeId() + ": Field: " + entry.getKey() + ", From: " + truncatedValue + ", To: " + truncatedValue2);
-            }
-*/
-
-            destinationNode.setName(fromNode.getName());
-            destinationNode.setTxt(fromNode.getTxt());
-            destinationNode.setSyntax(fromNode.getSyntax());
-            destinationNode.setTags(fromNode.getTags());
-            destinationNode.setIsRo(fromNode.getIsRo());
-            destinationNode.setIsRichtxt(fromNode.getIsRichtxt());
-            destinationNode.setHasCodebox(fromNode.getHasCodebox());
-            destinationNode.setHasTable(fromNode.getHasTable());
-            destinationNode.setHasImage(fromNode.getHasImage());
-            destinationNode.setLevel(fromNode.getLevel());
-            destinationNode.setTsCreation(fromNode.getTsCreation());
-            destinationNode.setTsLastsave(fromNode.getTsLastsave());
-            destinationRepository.save(destinationNode);
-            myService.increment(Statistics.UPDATED_NODES.getValue());
-
-
-            childrenService.syncUpdateRow(nodeId);
-
-            gridService.syncUpdateRecords(nodeId);
-            codeBoxService.syncUpdateRecords(nodeId);
-            imageService.syncUpdateRecords(nodeId);
-
-
-        } else {
-            // logger.info("nothing node");
-
-        }
-
-
-    }
-
-    /**
-     * hedefte bir node var fakat kaynakta yoksa silinmis demektir.
-     * hedefteki node'yi ve onunla baglantili tablolardaki verileri silme islemi yapar.
-     * @param destinationNode
-     */
-    public void syncDeleteNodeWithRelationships(Node destinationNode) {
-
-        Integer nodeId = destinationNode.getNodeId();
-
-
-        Node fromNode = fromRepository.findById(nodeId).orElse(null);
-        if (fromNode == null) {
-            logger.info("delete node: " + destinationNode.getNodeId() + ", " + destinationNode.getName());
-
-            destinationRepository.delete(destinationNode);
-
-            childrenService.syncDeleteRow(nodeId);            ;
-            gridService.syncDeleteRecords(nodeId);
-            codeBoxService.syncDeleteRecords(nodeId);
-            imageService.syncDeleteRecords(nodeId);
-            // TODO Bookmark node de olmali mi? Ama shadow node varsa?
-
-            myService.increment(Statistics.DELETED_NODES.getValue());
-
-
-
-        }
-
-    }
-
-    public static Map<String, Object[]> getWhatIsChanged(Node fromNode, Node destinationNode) {
-        Map<String, Object[]> differences = new HashMap<>();
-
+        if (!lock.tryLock()) throw new SyncBusyException();
+        Instant started = Instant.now();
+        status = new Status("RUNNING", started, null, "Reading a consistent source snapshot.");
         try {
-            // Lazy loaded collections must be initialized explicitly
-            // Hibernate.initialize(fromNode.getImages());
-            // Hibernate.initialize(destinationNode.getImages());
-
-            Field[] fields = Node.class.getDeclaredFields();
-            for (Field field : fields) {
-                field.setAccessible(true);
-                Object fromValue = field.get(fromNode);
-                Object toValue = field.get(destinationNode);
-
-                if (fromValue != null && toValue != null && !fromValue.equals(toValue)) {
-                    differences.put(field.getName(), new Object[]{fromValue, toValue});
-                } else if ((fromValue == null && toValue != null) || (fromValue != null && toValue == null)) {
-                    differences.put(field.getName(), new Object[]{fromValue, toValue});
-                }
+            // A bad configuration must fail before reading or writing the destination.
+            String sourceUrl = source.execute((org.springframework.jdbc.core.ConnectionCallback<String>)
+                c -> c.getMetaData().getURL());
+            String destinationUrl = destination.execute((org.springframework.jdbc.core.ConnectionCallback<String>)
+                c -> c.getMetaData().getURL());
+            if (sameSqliteFile(sourceUrl, destinationUrl)) {
+                throw new SyncSafetyException("Source and destination must be different files");
             }
-        } catch (IllegalAccessException e) {
-            logger.error("Error accessing fields for comparison", e);
+            Map<Table, Map<List<Object>, List<Object>>> snapshot = sourceTransaction.execute(s -> read(source));
+            Map<String, Integer> counters = new LinkedHashMap<>();
+            destinationTransaction.executeWithoutResult(s -> {
+                Map<Table, Map<List<Object>, List<Object>>> before = read(destination);
+                checkDeletes(snapshot.get(TABLES.get(0)), before.get(TABLES.get(0)));
+                String product = destination.execute((org.springframework.jdbc.core.ConnectionCallback<String>)
+                    c -> c.getMetaData().getDatabaseProductName());
+                boolean destinationHasMaster = hasMasterColumn(destination, product);
+                if (!destinationHasMaster && snapshot.get(TABLES.get(1)).values().stream()
+                        .anyMatch(row -> !Objects.equals(canonical(row.get(3)), canonical(0)))) {
+                    throw new SyncSafetyException("Destination children.master_id is required to preserve shared nodes");
+                }
+                // Delete dependants first, then nodes. Insert nodes before dependants.
+                List<Table> reversed = new ArrayList<>(TABLES);
+                Collections.reverse(reversed);
+                for (Table table : reversed) deleteMissing(table, snapshot.get(table), before.get(table), product, counters);
+                for (Table table : TABLES) writeChanged(table, snapshot.get(table), before.get(table), product, counters, destinationHasMaster);
+                Map<Table, Map<List<Object>, List<Object>>> after = read(destination);
+                if (!equalSnapshot(snapshot, after)) {
+                    throw new IllegalStateException("Destination content verification failed");
+                }
+                for (Table table : TABLES) {
+                    counters.put("from" + table.countName() + "Count", snapshot.get(table).size());
+                    counters.put("destination" + table.countName() + "Count", after.get(table).size());
+                }
+            });
+            status = new Status("SUCCEEDED", started, Instant.now(), "Destination committed and content verified.");
+            // Monitoring is separate from the committed data; its failure must not label a commit as a rollback.
+            try {
+                statistics.resetStatistics();
+                counters.forEach((key, value) -> statistics.set(key, value.toString()));
+            } catch (RuntimeException e) {
+                log.warn("Data committed, but monitoring counters could not be saved", e);
+                status = new Status("SUCCEEDED", started, status.finishedAt(), "Data committed; monitoring counters unavailable.");
+            }
+        } catch (RuntimeException e) {
+            status = new Status("FAILED", started, Instant.now(), e instanceof SyncSafetyException
+                ? e.getMessage() : "Synchronization failed; check the local application log.");
+            log.error("Synchronization did not complete; verify the destination if connection was lost during commit", e);
+            throw e;
+        } finally {
+            lock.unlock();
         }
-
-        return differences;
     }
 
+    public static boolean sameSqliteFile(String a, String b) {
+        if (a == null || b == null || !a.startsWith("jdbc:sqlite:") || !b.startsWith("jdbc:sqlite:")) return false;
+        try {
+            return sqlitePath(a).equals(sqlitePath(b)) || java.nio.file.Files.isSameFile(sqlitePath(a), sqlitePath(b));
+        } catch (java.io.IOException e) { return sqlitePath(a).equals(sqlitePath(b)); }
+    }
+    public static java.nio.file.Path sqlitePath(String url) {
+        String path = url.substring("jdbc:sqlite:".length()).split("\\?", 2)[0];
+        return (path.startsWith("file:") ? java.nio.file.Path.of(java.net.URI.create(path)) : java.nio.file.Path.of(path))
+            .toAbsolutePath().normalize();
+    }
+
+    private Map<Table, Map<List<Object>, List<Object>>> read(JdbcTemplate jdbc) {
+        return jdbc.execute((org.springframework.jdbc.core.ConnectionCallback<Map<Table, Map<List<Object>, List<Object>>>>) c -> {
+            Map<Table, Map<List<Object>, List<Object>>> tables = new LinkedHashMap<>();
+            String product = c.getMetaData().getDatabaseProductName();
+            if ("MySQL".equals(product)) {
+                for (Table table : TABLES) {
+                    String engine = jdbc.queryForObject(
+                        "SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=?",
+                        String.class, table.name());
+                    if (!"InnoDB".equalsIgnoreCase(engine)) {
+                        throw new SyncSafetyException("MySQL tables must use InnoDB for consistent reads and rollback support");
+                    }
+                }
+            }
+            for (Table table : TABLES) {
+                Map<List<Object>, List<Object>> rows = new LinkedHashMap<>();
+                try (Statement statement = c.createStatement();
+                     ResultSet rs = statement.executeQuery("SELECT * FROM " + quote(table.name(), product))) {
+                    Set<String> actual = new HashSet<>();
+                    for (int i = 1; i <= rs.getMetaData().getColumnCount(); i++) {
+                        actual.add(rs.getMetaData().getColumnName(i).toLowerCase(Locale.ROOT));
+                    }
+                    Set<String> expected = new HashSet<>(table.columns());
+                    if (table.name().equals("children") && !actual.contains("master_id")) expected.remove("master_id");
+                    if (!actual.equals(expected)) {
+                        throw new SyncSafetyException("Unsupported schema for table " + table.name());
+                    }
+                    while (rs.next()) {
+                        List<Object> values = new ArrayList<>();
+                        for (String column : table.columns()) {
+                            Object value = column.equals("master_id") && !actual.contains(column) ? 0
+                                : column.equals("png") ? rs.getBytes(column) : rs.getObject(column);
+                            if (column.equals("master_id") && value == null) value = 0;
+                            if (value instanceof Clob) value = rs.getString(column);
+                            values.add(value);
+                        }
+                        List<Object> key = values.subList(0, table.keys()).stream().map(SyncService::canonical).toList();
+                        if (key.stream().anyMatch(Objects::isNull) || rows.put(key, values) != null) {
+                            throw new SyncSafetyException("Null or duplicate key in " + table.name());
+                        }
+                    }
+                }
+                tables.put(table, rows);
+            }
+            return tables;
+        });
+    }
+
+    private void checkDeletes(Map<List<Object>, List<Object>> from, Map<List<Object>, List<Object>> to) {
+        if (to.isEmpty()) return;
+        if (from.isEmpty() && !allowEmptySource) throw new SyncSafetyException("Empty source deletion blocked; sync.allow-empty-source is false");
+        long deletes = to.keySet().stream().filter(k -> !from.containsKey(k)).count();
+        if (deletes * 100L > (long) to.size() * maxDeletePercent) {
+            throw new SyncSafetyException("Deletion exceeds sync.max-delete-percent (" + maxDeletePercent + "%); no destination changes applied");
+        }
+    }
+
+    private void deleteMissing(Table table, Map<List<Object>, List<Object>> from,
+                               Map<List<Object>, List<Object>> to, String product, Map<String, Integer> counters) {
+        int count = 0;
+        for (var entry : to.entrySet()) {
+            if (!from.containsKey(entry.getKey())) {
+                destination.update("DELETE FROM " + quote(table.name(), product) + where(table, product),
+                    entry.getValue().subList(0, table.keys()).toArray());
+                count++;
+            }
+        }
+        counters.put("deleted" + table.counterName(), count);
+    }
+
+    private void writeChanged(Table table, Map<List<Object>, List<Object>> from,
+                              Map<List<Object>, List<Object>> to, String product, Map<String, Integer> counters, boolean hasMaster) {
+        int created = 0, updated = 0;
+        for (var entry : from.entrySet()) {
+            List<String> writeColumns = table.columns().stream()
+                .filter(c -> hasMaster || !table.name().equals("children") || !c.equals("master_id")).toList();
+            List<Object> values = writeColumns.stream().map(c -> entry.getValue().get(table.columns().indexOf(c))).toList();
+            if (!to.containsKey(entry.getKey())) {
+                String columns = String.join(",", writeColumns.stream().map(c -> quote(c, product)).toList());
+                String placeholders = String.join(",", Collections.nCopies(values.size(), "?"));
+                destination.update("INSERT INTO " + quote(table.name(), product) + " (" + columns + ") VALUES (" + placeholders + ")", values.toArray());
+                created++;
+            } else if (!equalRow(entry.getValue(), to.get(entry.getKey()))) {
+                List<String> columns = writeColumns.subList(table.keys(), writeColumns.size());
+                String assignments = String.join(",", columns.stream().map(c -> quote(c, product) + "=?").toList());
+                List<Object> args = new ArrayList<>(values.subList(table.keys(), values.size()));
+                args.addAll(values.subList(0, table.keys()));
+                destination.update("UPDATE " + quote(table.name(), product) + " SET " + assignments + where(table, product), args.toArray());
+                updated++;
+            }
+        }
+        counters.put("created" + table.counterName(), created);
+        counters.put("updated" + table.counterName(), updated);
+    }
+
+    private static boolean hasMasterColumn(JdbcTemplate jdbc, String product) {
+        return Boolean.TRUE.equals(jdbc.execute((org.springframework.jdbc.core.ConnectionCallback<Boolean>) c -> {
+            try (Statement statement = c.createStatement();
+                 ResultSet rs = statement.executeQuery("SELECT * FROM " + quote("children", product) + " WHERE 1=0")) {
+                for (int i = 1; i <= rs.getMetaData().getColumnCount(); i++) {
+                    if (rs.getMetaData().getColumnName(i).equalsIgnoreCase("master_id")) return true;
+                }
+                return false;
+            }
+        }));
+    }
+
+    private static String where(Table table, String product) {
+        return " WHERE " + String.join(" AND ", table.columns().subList(0, table.keys()).stream().map(c -> quote(c, product) + "=?").toList());
+    }
+    private static String quote(String identifier, String product) {
+        if (product.equals("MySQL")) return "`" + identifier + "`";
+        if (product.equals("Microsoft SQL Server")) return "[" + identifier + "]";
+        return "\"" + identifier + "\"";
+    }
+    private static Object canonical(Object value) {
+        if (value instanceof Number) return new BigDecimal(value.toString()).stripTrailingZeros();
+        return value;
+    }
+    static boolean equalRow(List<Object> a, List<Object> b) {
+        if (a.size() != b.size()) return false;
+        for (int i = 0; i < a.size(); i++) {
+            if (!Objects.deepEquals(canonical(a.get(i)), canonical(b.get(i)))) return false;
+        }
+        return true;
+    }
+    private static boolean equalSnapshot(Map<Table, Map<List<Object>, List<Object>>> a, Map<Table, Map<List<Object>, List<Object>>> b) {
+        for (Table table : TABLES) {
+            if (!a.get(table).keySet().equals(b.get(table).keySet())) return false;
+            for (var row : a.get(table).entrySet()) if (!equalRow(row.getValue(), b.get(table).get(row.getKey()))) return false;
+        }
+        return true;
+    }
+    public static class SyncSafetyException extends IllegalStateException {
+        public SyncSafetyException(String message) { super(message); }
+    }
+    public static class SyncBusyException extends RuntimeException {
+        public SyncBusyException() { super("A synchronization is already running"); }
+    }
 }

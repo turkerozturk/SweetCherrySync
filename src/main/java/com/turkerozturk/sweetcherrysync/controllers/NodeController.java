@@ -20,48 +20,29 @@
  */
 package com.turkerozturk.sweetcherrysync.controllers;
 
-
-import com.turkerozturk.sweetcherrysync.my.services.MyService;
-import com.turkerozturk.sweetcherrysync.services.NodeService;
 import com.turkerozturk.sweetcherrysync.services.SyncService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RestController;
-
-import java.text.DateFormat;
-import java.text.SimpleDateFormat;
-import java.util.Date;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 
 @RestController
 public class NodeController {
+    private final SyncService syncService;
+    public NodeController(SyncService syncService) { this.syncService = syncService; }
 
-    private static final Logger logger = LoggerFactory.getLogger(NodeController.class);
+    @GetMapping("/sync/status")
+    public SyncService.Status status() { return syncService.getStatus(); }
 
-    @Autowired
-    private MyService myService;
-
-    @Autowired
-    private SyncService syncService;
-
-    @Autowired
-    private NodeService nodeService;
-
-    @GetMapping("/sync")
-    public String syncDatabases() {
-      //  nodeService.syncNodes(); // TODO examine and make orphan
-
-        logger.info("Sync started manually by calling the <webserver>/sync URL.");
-
-
-        DateFormat dateFormat = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss");
-        Date dateStart = new Date();
-        System.out.println(dateFormat.format(dateStart));
-
-        myService.resetStatistics();
-        syncService.syncNodes();
-
-        return "The destination database is synchronized successfully!";
+    @PostMapping("/sync")
+    public ResponseEntity<SyncService.Status> syncDatabases() {
+        try {
+            syncService.syncNodes();
+            return ResponseEntity.ok(syncService.getStatus());
+        } catch (SyncService.SyncBusyException e) {
+            return ResponseEntity.status(409).body(syncService.getStatus());
+        } catch (SyncService.SyncSafetyException e) {
+            return ResponseEntity.unprocessableEntity().body(syncService.getStatus());
+        } catch (RuntimeException e) {
+            return ResponseEntity.internalServerError().body(syncService.getStatus());
+        }
     }
 }

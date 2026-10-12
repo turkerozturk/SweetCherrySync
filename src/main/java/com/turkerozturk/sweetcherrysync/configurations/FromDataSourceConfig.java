@@ -25,7 +25,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.context.annotation.*;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -66,13 +65,38 @@ public class FromDataSourceConfig {
     @Value("${from.datasource.driver-class-name}")
     private String fromDbDriverClassName;
 
+    @Value("${from.datasource.username:}")
+    private String fromDbUsername;
+
+    @Value("${from.datasource.password:}")
+    private String fromDbPassword;
+
     @Bean(name = "fromDataSource")
     @Primary
     public DataSource fromDataSource() {
-        return DataSourceBuilder.create()
-                .url(fromDbUrl)
-                .driverClassName(fromDbDriverClassName)
-                .build();
+        if (!fromDbUrl.startsWith("jdbc:sqlite:")) {
+            com.zaxxer.hikari.HikariConfig pool = new com.zaxxer.hikari.HikariConfig();
+            pool.setJdbcUrl(fromDbUrl);
+            pool.setDriverClassName(fromDbDriverClassName);
+            pool.setUsername(fromDbUsername);
+            pool.setPassword(fromDbPassword);
+            pool.setReadOnly(true);
+            return new com.zaxxer.hikari.HikariDataSource(pool);
+        }
+        java.nio.file.Path path = com.turkerozturk.sweetcherrysync.services.SyncService.sqlitePath(fromDbUrl);
+        if (!java.nio.file.Files.isRegularFile(path)) {
+            throw new IllegalArgumentException("Source CTB must already exist; an empty file will not be created");
+        }
+        org.sqlite.SQLiteConfig config = new org.sqlite.SQLiteConfig();
+        config.setReadOnly(true);
+        config.setBusyTimeout(10000);
+        org.sqlite.SQLiteDataSource sqlite = new org.sqlite.SQLiteDataSource(config);
+        sqlite.setUrl("jdbc:sqlite:" + path.toUri() + "?mode=ro");
+        com.zaxxer.hikari.HikariConfig pool = new com.zaxxer.hikari.HikariConfig();
+        pool.setDataSource(sqlite);
+        pool.setReadOnly(true);
+        pool.setMaximumPoolSize(2);
+        return new com.zaxxer.hikari.HikariDataSource(pool);
     }
 
     @Bean(name = "fromEntityManagerFactory")
