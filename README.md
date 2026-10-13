@@ -12,6 +12,11 @@ See [reliability guide (TR)](documentation/reliability_tr.md) for the atomic
 snapshot transfer, deletion guards, read-only source, tests, and remaining limits.
 The old compiled release below does **not** contain these changes.
 
+## Server setup and connection diagnostics
+
+- [Raspberry Pi / Webmin setup and project connections (TR)](documentation/webmin_setup_tr.md)
+- [Swing connection diagnostics tool proposal (TR)](documentation/connection_diagnostics_swing_plan_tr.md)
+
 ## Download URL of Compiled Version
 
 https://github.com/turkerozturk/SweetCherrySync/releases/download/1.0.0/sweetcherrysync-1.0.0-compiled.zip
