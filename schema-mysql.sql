@@ -1,14 +1,71 @@
-CREATE TABLE IF NOT EXISTS bookmark (node_id INTEGER UNIQUE,sequence INTEGER) ENGINE=InnoDB;
+-- New dedicated mirror tables only; existing tables are not migrated.
 
-CREATE TABLE IF NOT EXISTS children (node_id INTEGER UNIQUE,father_id INTEGER,sequence INTEGER,master_id INTEGER) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS `node` (
+    `node_id` BIGINT NOT NULL,
+    `name` LONGTEXT,
+    `txt` LONGTEXT,
+    `syntax` LONGTEXT,
+    `tags` LONGTEXT,
+    `is_ro` INTEGER,
+    `is_richtxt` INTEGER,
+    `has_codebox` INTEGER,
+    `has_table` INTEGER,
+    `has_image` INTEGER,
+    `level` INTEGER,
+    `ts_creation` BIGINT,
+    `ts_lastsave` BIGINT,
+    PRIMARY KEY (`node_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS codebox (node_id INTEGER,offset INTEGER,justification TEXT,txt LONGTEXT,syntax TEXT,width INTEGER,height INTEGER,is_width_pix INTEGER,do_highl_bra INTEGER,do_show_linenum INTEGER) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS `children` (
+    `node_id` BIGINT NOT NULL,
+    `father_id` BIGINT,
+    `sequence` BIGINT,
+    `master_id` BIGINT,
+    PRIMARY KEY (`node_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS grid (node_id INTEGER,offset INTEGER,justification TEXT,txt LONGTEXT,col_min INTEGER,col_max INTEGER) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS `bookmark` (
+    `node_id` BIGINT NOT NULL,
+    `sequence` BIGINT,
+    PRIMARY KEY (`node_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS image (node_id INTEGER,offset INTEGER,justification TEXT,anchor TEXT,png MEDIUMBLOB,filename TEXT,link TEXT,time INTEGER) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS `codebox` (
+    `node_id` BIGINT NOT NULL,
+    `offset` INTEGER NOT NULL,
+    `justification` LONGTEXT,
+    `txt` LONGTEXT,
+    `syntax` LONGTEXT,
+    `width` INTEGER,
+    `height` INTEGER,
+    `is_width_pix` INTEGER,
+    `do_highl_bra` INTEGER,
+    `do_show_linenum` INTEGER,
+    PRIMARY KEY (`node_id`, `offset`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS node (node_id INTEGER UNIQUE,name TEXT,txt LONGTEXT,syntax TEXT,tags TEXT,is_ro INTEGER,is_richtxt INTEGER,has_codebox INTEGER,has_table INTEGER,has_image INTEGER,level INTEGER,ts_creation INTEGER,ts_lastsave INTEGER) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS `grid` (
+    `node_id` BIGINT NOT NULL,
+    `offset` INTEGER NOT NULL,
+    `justification` LONGTEXT,
+    `txt` LONGTEXT,
+    `col_min` INTEGER,
+    `col_max` INTEGER,
+    PRIMARY KEY (`node_id`, `offset`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `image` (
+    `node_id` BIGINT NOT NULL,
+    `offset` INTEGER NOT NULL,
+    `justification` LONGTEXT,
+    `anchor` LONGTEXT,
+    `png` LONGBLOB,
+    `filename` LONGTEXT,
+    `link` LONGTEXT,
+    `time` BIGINT,
+    PRIMARY KEY (`node_id`, `offset`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- https://www.digitalocean.com/community/tutorials/sqlite-vs-mysql-vs-postgresql-a-comparison-of-relational-database-management-systems
 -- * MEDIUMBLOB: A blob column with a maximum length of 16777215 (2^24 - 1) bytes of data.

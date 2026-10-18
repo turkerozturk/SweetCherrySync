@@ -55,6 +55,17 @@ public class SyncService {
     }
     public record Status(String state, Instant startedAt, Instant finishedAt, String message) {}
     private volatile Status status = new Status("IDLE", null, null, "No synchronization has run yet.");
+    private volatile String phase = "Idle";
+    private volatile long processed = 0;
+    private volatile long total = 0;
+    public record Progress(Status status, String phase, long processed, long total, long elapsedSeconds) {}
+    public Progress getProgress() {
+        Status current = status;
+        long elapsed = current.startedAt() == null ? 0 : java.time.Duration.between(
+            current.startedAt(), current.finishedAt() == null ? Instant.now() : current.finishedAt()).toSeconds();
+        return new Progress(current, phase, processed, total, elapsed);
+    }
+    private void phase(String value) { phase = value; log.info("Sync phase: {}", value); }
     private final ReentrantLock lock = new ReentrantLock();
     private final JdbcTemplate source;
     private final JdbcTemplate destination;
@@ -90,6 +101,7 @@ public class SyncService {
         if (!lock.tryLock()) throw new SyncBusyException();
         Instant started = Instant.now();
         status = new Status("RUNNING", started, null, "Reading a consistent source snapshot.");
+        processed = 0; total = 0; phase("Checking source and destination connections");
         try {
             // A bad configuration must fail before reading or writing the destination.
             String sourceUrl = source.execute((org.springframework.jdbc.core.ConnectionCallback<String>)
@@ -99,8 +111,10 @@ public class SyncService {
             if (sameSqliteFile(sourceUrl, destinationUrl)) {
                 throw new SyncSafetyException("Source and destination must be different files");
             }
+            phase("Reading and validating source schema");
             Map<Table, Map<List<Object>, List<Object>>> snapshot = sourceTransaction.execute(s -> read(source));
             Map<String, Integer> counters = new LinkedHashMap<>();
+            phase("Checking destination schema and preparing transaction");
             destinationTransaction.executeWithoutResult(s -> {
                 Map<Table, Map<List<Object>, List<Object>>> before = read(destination);
                 checkDeletes(snapshot.get(TABLES.get(0)), before.get(TABLES.get(0)));
@@ -111,11 +125,14 @@ public class SyncService {
                         .anyMatch(row -> !Objects.equals(canonical(row.get(3)), canonical(0)))) {
                     throw new SyncSafetyException("Destination children.master_id is required to preserve shared nodes");
                 }
+                total = TABLES.stream().mapToLong(table -> snapshot.get(table).size() + before.get(table).size()).sum();
+                phase("Applying changes to destination");
                 // Delete dependants first, then nodes. Insert nodes before dependants.
                 List<Table> reversed = new ArrayList<>(TABLES);
                 Collections.reverse(reversed);
                 for (Table table : reversed) deleteMissing(table, snapshot.get(table), before.get(table), product, counters);
                 for (Table table : TABLES) writeChanged(table, snapshot.get(table), before.get(table), product, counters, destinationHasMaster);
+                phase("Verifying destination content");
                 Map<Table, Map<List<Object>, List<Object>>> after = read(destination);
                 if (!equalSnapshot(snapshot, after)) {
                     throw new IllegalStateException("Destination content verification failed");
@@ -125,6 +142,7 @@ public class SyncService {
                     counters.put("destination" + table.countName() + "Count", after.get(table).size());
                 }
             });
+            phase("Committed and verified");
             status = new Status("SUCCEEDED", started, Instant.now(), "Destination committed and content verified.");
             // Monitoring is separate from the committed data; its failure must not label a commit as a rollback.
             try {
@@ -135,6 +153,7 @@ public class SyncService {
                 status = new Status("SUCCEEDED", started, status.finishedAt(), "Data committed; monitoring counters unavailable.");
             }
         } catch (RuntimeException e) {
+            phase("Failed");
             status = new Status("FAILED", started, Instant.now(), e instanceof SyncSafetyException
                 ? e.getMessage() : "Synchronization failed; check the local application log.");
             log.error("Synchronization did not complete; verify the destination if connection was lost during commit", e);
@@ -223,6 +242,7 @@ public class SyncService {
                 count++;
             }
         }
+        processed += to.size();
         counters.put("deleted" + table.counterName(), count);
     }
 
@@ -247,6 +267,7 @@ public class SyncService {
                 updated++;
             }
         }
+        processed += from.size();
         counters.put("created" + table.counterName(), created);
         counters.put("updated" + table.counterName(), updated);
     }

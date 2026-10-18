@@ -10,6 +10,9 @@
         th { background: #eef2f7; }
         button { padding: .6rem 1rem; cursor: pointer; }
         caption { text-align: left; margin: .5rem 0; }
+        .monitor { padding: 1rem; border: 1px solid #cbd5e1; border-radius: 8px; margin: 1rem 0; }
+        progress { width: 100%; height: 1.2rem; }
+        .muted { color: #526174; }
     </style>
 </head>
 <body>
@@ -17,14 +20,19 @@
 <div class="container mt-5">
     <h1>SweetCherrySync</h1>
     <p>Dedicated one-way mirror. The source is authoritative; destination edits may be overwritten.</p>
-    <p>Last run: <strong th:text="${syncStatus.state}">IDLE</strong></p>
-    <p th:text="${syncStatus.message}"></p>
-    <p>Started: <span th:text="${syncStatus.startedAt}"></span>
-        Finished: <span th:text="${syncStatus.finishedAt}"></span></p>
-    <form method="post" th:action="@{/sync}">
-        <button type="submit" class="btn btn-primary mb-3">Synchronize now</button>
-    </form>
-    <p>Refresh this page to update the status. Counters describe the last successful commit.</p>
+    <section class="monitor" aria-live="polite">
+        <p>State: <strong id="sync-state" th:text="${syncStatus.state}">IDLE</strong></p>
+        <p id="sync-message" th:text="${syncStatus.message}"></p>
+        <p>Phase: <strong id="sync-phase">Idle</strong></p>
+        <p>Elapsed: <strong id="sync-elapsed">0:00</strong> · Processed: <strong id="sync-count">0</strong></p>
+        <progress id="sync-progress" max="100" value="0"></progress>
+        <p class="muted" id="sync-percent">Progress is an operation counter, not an ETA.</p>
+        <button id="sync-start" type="button">Synchronize now</button>
+        <p class="muted" id="sync-feedback" role="status"></p>
+        <p class="muted">Status refreshes every 5 seconds; a checkpoint is displayed every minute in the activity log.</p>
+        <pre id="sync-log" aria-label="Activity log"></pre>
+    </section>
+    <p>Counters below describe the last successful commit. Refresh the page after completion to update them.</p>
     <table class="table table-bordered table-striped">
         <caption>Database Synchronization Information</caption>
 
@@ -108,5 +116,54 @@
     </table>
 </div>
 
+<script>
+(() => {
+    const $ = id => document.getElementById(id);
+    let previousPhase = '', previousState = '', lastMinute = -1;
+    const started = $('sync-start');
+    const log = (message) => {
+        const stamp = new Date().toLocaleTimeString();
+        $('sync-log').textContent = `[${stamp}] ${message}\n` + $('sync-log').textContent.slice(0, 3000);
+    };
+    async function refresh() {
+        try {
+            const response = await fetch('/sync/progress', {cache: 'no-store'});
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            const data = await response.json(), state = data.status.state;
+            $('sync-state').textContent = state;
+            $('sync-message').textContent = data.status.message;
+            $('sync-phase').textContent = data.phase;
+            const seconds = data.elapsedSeconds;
+            $('sync-elapsed').textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+            $('sync-count').textContent = `${data.processed} / ${data.total || '?'}`;
+            const percentage = data.total > 0 ? Math.min(100, Math.floor(data.processed * 100 / data.total)) : 0;
+            $('sync-progress').value = percentage;
+            $('sync-percent').textContent = data.total > 0 ? `${percentage}% of counted operations (verification and commit may still be running)` : 'Preparing work; total not known yet.';
+            started.disabled = state === 'RUNNING';
+            if (data.phase !== previousPhase || state !== previousState) {
+                log(`${state}: ${data.phase}`);
+                previousPhase = data.phase; previousState = state;
+            }
+            const minute = Math.floor(seconds / 60);
+            if (state === 'RUNNING' && minute > 0 && minute !== lastMinute) {
+                log(`Minute ${minute}: ${data.processed} / ${data.total || '?'} operations`);
+                lastMinute = minute;
+            }
+        } catch (error) { $('sync-feedback').textContent = 'Cannot retrieve status: ' + error.message; }
+    }
+    started.addEventListener('click', async () => {
+        started.disabled = true;
+        $('sync-feedback').textContent = 'Submitting synchronization...';
+        try {
+            const response = await fetch('/sync/start', {method: 'POST'});
+            $('sync-feedback').textContent = response.status === 202 ? 'Synchronization accepted.' :
+                response.status === 409 ? 'A synchronization is already running.' : `Request failed (HTTP ${response.status}).`;
+        } catch (error) { $('sync-feedback').textContent = 'Request failed: ' + error.message; }
+        await refresh();
+    });
+    refresh();
+    setInterval(refresh, 5000);
+})();
+</script>
 </body>
 </html>
