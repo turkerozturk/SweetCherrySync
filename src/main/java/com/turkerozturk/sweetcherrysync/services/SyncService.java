@@ -219,6 +219,7 @@ public class SyncService {
             for (Table table : TABLES) {
                 long tableTick = tick();
                 Map<List<Object>, List<Object>> rows = new LinkedHashMap<>();
+                long blobBytes = 0;
                 try (Statement statement = c.createStatement();
                      ResultSet rs = statement.executeQuery("SELECT * FROM " + quote(table.name(), product))) {
                     Set<String> actual = new HashSet<>();
@@ -237,6 +238,7 @@ public class SyncService {
                                 : column.equals("png") ? rs.getBytes(column) : rs.getObject(column);
                             if (column.equals("master_id") && value == null) value = 0;
                             if (value instanceof Clob) value = rs.getString(column);
+                            if (column.equals("png") && value instanceof byte[] bytes) blobBytes += bytes.length;
                             values.add(value);
                         }
                         List<Object> key = values.subList(0, table.keys()).stream().map(SyncService::canonical).toList();
@@ -246,9 +248,18 @@ public class SyncService {
                     }
                 }
                 tables.put(table, rows);
+                long elapsedMs = (System.nanoTime() - tableTick) / 1_000_000;
                 log.info("Sync timing: {} snapshot table {} = {} ms ({} rows)",
-                    jdbc == source ? "source" : "destination", table.name(),
-                    (System.nanoTime() - tableTick) / 1_000_000, rows.size());
+                    jdbc == source ? "source" : "destination", table.name(), elapsedMs, rows.size());
+                if (table.name().equals("image")) {
+                    // Count bytes already read by the full-sync algorithm; do not issue additional SQL.
+                    // This includes attachments stored in image.png and excludes JDBC protocol overhead.
+                    log.info("Sync timing: {} image payload = {} MiB, {} MiB/s ({} rows)",
+                        jdbc == source ? "source" : "destination",
+                        String.format(Locale.ROOT, "%.2f", blobBytes / 1048576.0),
+                        String.format(Locale.ROOT, "%.2f", elapsedMs == 0 ? 0.0 : blobBytes * 1000.0 / (1048576.0 * elapsedMs)),
+                        rows.size());
+                }
             }
             return tables;
         });
