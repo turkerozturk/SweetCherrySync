@@ -67,6 +67,13 @@ public class SyncService {
     }
     private void phase(String value) { phase = value; log.info("Sync phase: {}", value); }
     private final ReentrantLock lock = new ReentrantLock();
+
+    // Timings are diagnostic only: no SQL values, credentials or row content are logged.
+    private static long tick() { return System.nanoTime(); }
+    private static void timing(String step, long started) {
+        log.info("Sync timing: {} = {} ms", step, (System.nanoTime() - started) / 1_000_000);
+    }
+
     private final JdbcTemplate source;
     private final JdbcTemplate destination;
     private final TransactionTemplate sourceTransaction;
@@ -102,8 +109,10 @@ public class SyncService {
         Instant started = Instant.now();
         status = new Status("RUNNING", started, null, "Reading a consistent source snapshot.");
         processed = 0; total = 0; phase("Checking source and destination connections");
+        long syncTick = tick();
         try {
             // A bad configuration must fail before reading or writing the destination.
+            long stepTick = tick();
             String sourceUrl = source.execute((org.springframework.jdbc.core.ConnectionCallback<String>)
                 c -> c.getMetaData().getURL());
             String destinationUrl = destination.execute((org.springframework.jdbc.core.ConnectionCallback<String>)
@@ -111,12 +120,20 @@ public class SyncService {
             if (sameSqliteFile(sourceUrl, destinationUrl)) {
                 throw new SyncSafetyException("Source and destination must be different files");
             }
+            timing("Connection checks", stepTick);
             phase("Reading and validating source schema");
+            stepTick = tick();
             Map<Table, Map<List<Object>, List<Object>>> snapshot = sourceTransaction.execute(s -> read(source));
+            timing("Source snapshot total", stepTick);
             Map<String, Integer> counters = new LinkedHashMap<>();
             phase("Checking destination schema and preparing transaction");
+            stepTick = tick();
             destinationTransaction.executeWithoutResult(s -> {
+                long transactionTick = tick();
+                long readTick = tick();
                 Map<Table, Map<List<Object>, List<Object>>> before = read(destination);
+                timing("Destination snapshot before changes", readTick);
+                long prepareTick = tick();
                 checkDeletes(snapshot.get(TABLES.get(0)), before.get(TABLES.get(0)));
                 String product = destination.execute((org.springframework.jdbc.core.ConnectionCallback<String>)
                     c -> c.getMetaData().getDatabaseProductName());
@@ -126,22 +143,31 @@ public class SyncService {
                     throw new SyncSafetyException("Destination children.master_id is required to preserve shared nodes");
                 }
                 total = TABLES.stream().mapToLong(table -> snapshot.get(table).size() + before.get(table).size()).sum();
+                timing("Destination safety and metadata checks", prepareTick);
                 phase("Applying changes to destination");
+                long applyTick = tick();
                 // Delete dependants first, then nodes. Insert nodes before dependants.
                 List<Table> reversed = new ArrayList<>(TABLES);
                 Collections.reverse(reversed);
                 for (Table table : reversed) deleteMissing(table, snapshot.get(table), before.get(table), product, counters);
                 for (Table table : TABLES) writeChanged(table, snapshot.get(table), before.get(table), product, counters, destinationHasMaster);
+                timing("Apply deletes and updates", applyTick);
                 phase("Verifying destination content");
+                long verifyTick = tick();
                 Map<Table, Map<List<Object>, List<Object>>> after = read(destination);
+                timing("Destination verification snapshot read", verifyTick);
+                long compareTick = tick();
                 if (!equalSnapshot(snapshot, after)) {
                     throw new IllegalStateException("Destination content verification failed");
                 }
+                timing("Destination snapshot comparison", compareTick);
                 for (Table table : TABLES) {
                     counters.put("from" + table.countName() + "Count", snapshot.get(table).size());
                     counters.put("destination" + table.countName() + "Count", after.get(table).size());
                 }
+                timing("Destination transaction callback", transactionTick);
             });
+            timing("Destination transaction including commit", stepTick);
             phase("Committed and verified");
             status = new Status("SUCCEEDED", started, Instant.now(), "Destination committed and content verified.");
             // Monitoring is separate from the committed data; its failure must not label a commit as a rollback.
@@ -159,6 +185,7 @@ public class SyncService {
             log.error("Synchronization did not complete; verify the destination if connection was lost during commit", e);
             throw e;
         } finally {
+            timing("Overall sync", syncTick);
             lock.unlock();
         }
     }
@@ -190,6 +217,7 @@ public class SyncService {
                 }
             }
             for (Table table : TABLES) {
+                long tableTick = tick();
                 Map<List<Object>, List<Object>> rows = new LinkedHashMap<>();
                 try (Statement statement = c.createStatement();
                      ResultSet rs = statement.executeQuery("SELECT * FROM " + quote(table.name(), product))) {
@@ -218,6 +246,9 @@ public class SyncService {
                     }
                 }
                 tables.put(table, rows);
+                log.info("Sync timing: {} snapshot table {} = {} ms ({} rows)",
+                    jdbc == source ? "source" : "destination", table.name(),
+                    (System.nanoTime() - tableTick) / 1_000_000, rows.size());
             }
             return tables;
         });
