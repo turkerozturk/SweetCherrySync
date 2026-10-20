@@ -35,3 +35,7 @@ build/
 
 # Local post-commit audit contains private note titles; never commit it.
 /logs/
+
+# Release artifacts and local secrets
+/dist/
+/application.yml

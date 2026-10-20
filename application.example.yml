@@ -1,0 +1,47 @@
+# SweetCherrySync 1.1.0-alpha.1 — RELEASE CONFIGURATION EXAMPLE
+# Copy to application.yml and edit before starting. NEVER commit real credentials.
+# The packaged JAR contains additional defaults; this external file overrides only these values.
+# Relative paths are resolved from the process working directory.
+
+server:
+  address: 127.0.0.1  # Keep localhost; there is no web authentication.
+  port: 8081
+
+# Main source: an existing CherryTree SQLite CTB, opened read-only.
+from:
+  datasource:
+    dialect: org.hibernate.community.dialect.SQLiteDialect
+    url: 'jdbc:sqlite:C:/CHANGE_ME/path/to/notes.ctb'
+    driver-class-name: org.sqlite.JDBC
+    username: ''
+    password: ''
+
+# Example target: an EMPTY, dedicated MariaDB/MySQL database.
+# For PostgreSQL, use org.hibernate.dialect.PostgreSQLDialect,
+# jdbc:postgresql://HOST:5432/DATABASE, org.postgresql.Driver,
+# and schema-postgresql.sql instead.
+destination:
+  datasource:
+    dialect: org.hibernate.dialect.MySQLDialect
+    url: 'jdbc:mysql://127.0.0.1:3306/CHANGE_ME_DATABASE'
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: CHANGE_ME_USERNAME
+    password: CHANGE_ME_PASSWORD
+    schema: schema-mysql.sql
+
+# Mirrors propagate deletions; keep separate backups.
+sync:
+  max-delete-percent: 20
+  allow-empty-source: false
+  auto:
+    enabled: false
+    mode: INCREMENTAL
+    interval-seconds: 300
+  audit:
+    enabled: true
+    path: ./logs/sync-node-changes.jsonl
+
+# Do not enable the retired legacy scheduler together with runtime scheduling.
+my:
+  scheduler:
+    legacy-enabled: false
