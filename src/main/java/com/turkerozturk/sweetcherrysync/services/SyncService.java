@@ -79,6 +79,7 @@ public class SyncService {
     private final TransactionTemplate sourceTransaction;
     private final TransactionTemplate destinationTransaction;
     private final MyService statistics;
+    private final IncrementalPreviewService incrementalPreview;
     private final int maxDeletePercent;
     private final boolean allowEmptySource;
 
@@ -93,6 +94,7 @@ public class SyncService {
         this.source = new JdbcTemplate(from);
         this.destination = new JdbcTemplate(to);
         this.statistics = statistics;
+        this.incrementalPreview = new IncrementalPreviewService(from, to);
         this.maxDeletePercent = maxDeletePercent;
         this.allowEmptySource = allowEmptySource;
         sourceTransaction = new TransactionTemplate(new JdbcTransactionManager(from));
@@ -188,6 +190,261 @@ public class SyncService {
             timing("Overall sync", syncTick);
             lock.unlock();
         }
+    }
+
+    /**
+     * Incremental synchronization uses a complete metadata comparison, not MAX(ts_lastsave).
+     * The source is authoritative. Dependent content is fetched only for new/changed real nodes.
+     * Legacy full synchronization is intentionally unaffected by this method.
+     */
+    public void syncIncremental() {
+        if (!lock.tryLock()) throw new SyncBusyException();
+        Instant started = Instant.now();
+        status = new Status("RUNNING", started, null, "Checking incremental change candidates.");
+        processed = 0; total = 0;
+        long startedTick = tick();
+        Map<String, Integer> counters = new LinkedHashMap<>();
+        try {
+            phase("Incremental: checking database connections");
+            String sourceUrl = source.execute((org.springframework.jdbc.core.ConnectionCallback<String>)
+                c -> c.getMetaData().getURL());
+            String destinationUrl = destination.execute((org.springframework.jdbc.core.ConnectionCallback<String>)
+                c -> c.getMetaData().getURL());
+            if (sameSqliteFile(sourceUrl, destinationUrl))
+                throw new SyncSafetyException("Source and destination must be different files");
+
+            // Nest destination writes inside a read-only source transaction: all source reads
+            // (metadata and scoped content) belong to the same source snapshot.
+            sourceTransaction.executeWithoutResult(sourceTx -> {
+                phase("Incremental: validating source schema and reading metadata");
+                validateIncrementalSchema(source);
+                IncrementalPreviewService.Snapshot sourceMeta = incrementalPreview.snapshot(source);
+                destinationTransaction.executeWithoutResult(destinationTx -> {
+                    phase("Incremental: validating target and comparing metadata");
+                    validateIncrementalSchema(destination);
+                    IncrementalPreviewService.Snapshot targetMeta = incrementalPreview.snapshot(destination);
+                    IncrementalPreviewService.Preview plan = IncrementalPreviewService.analyze(sourceMeta, targetMeta);
+                    checkIncrementalDeletes(plan.removed().size(), targetMeta.nodes().size(), sourceMeta.nodes().size());
+                    if (plan.contentAffectedNodes().size() > 1000)
+                        throw new SyncSafetyException("Too many content candidates for incremental mode; run Legacy Full Sync");
+                    String product = destination.execute((org.springframework.jdbc.core.ConnectionCallback<String>)
+                        c -> c.getMetaData().getDatabaseProductName());
+                    boolean destinationHasMaster = hasMasterColumn(destination, product);
+                    if (!destinationHasMaster && sourceMeta.children().values().stream()
+                        .anyMatch(row -> row.size() > 3 && !Objects.equals(canonical(row.get(3)), canonical(0))))
+                        throw new SyncSafetyException("Destination children.master_id is required to preserve shared nodes");
+
+                    // Only real nodes with changed metadata can require a content transfer.
+                    Set<Long> active = new TreeSet<>(plan.contentAffectedNodes());
+                    active.removeAll(plan.removed());
+                    Map<Table, Map<List<Object>, List<Object>>> fromScoped = new LinkedHashMap<>();
+                    Map<Table, Map<List<Object>, List<Object>>> toScoped = new LinkedHashMap<>();
+                    for (Table table : TABLES) {
+                        if (table.name().equals("children")) {
+                            fromScoped.put(table, metadataRows(sourceMeta.children(), table));
+                            toScoped.put(table, metadataRows(targetMeta.children(), table));
+                        } else if (table.name().equals("bookmark")) {
+                            fromScoped.put(table, metadataRows(sourceMeta.bookmarks(), table));
+                            toScoped.put(table, metadataRows(targetMeta.bookmarks(), table));
+                        } else {
+                            fromScoped.put(table, readSelected(source, table, active));
+                            toScoped.put(table, readSelected(destination, table, active));
+                        }
+                    }
+                    // Real node removals must not download their old dependent BLOB values.
+                    // Metadata-only removal and scoped content updates have separate paths.
+                    total = 1 + plan.removed().size() * 4L + TABLES.stream()
+                        .mapToLong(t -> fromScoped.get(t).size() + toScoped.get(t).size()).sum();
+                    phase("Incremental: applying changes to destination");
+                    long applyTick = tick();
+                    for (Table table : List.of(TABLES.get(5), TABLES.get(4), TABLES.get(3))) {
+                        int deleted = deleteByNodeIds(table, plan.removed(), product);
+                        counters.put("deleted" + table.counterName(), deleted);
+                    }
+                    // Remove absent hierarchy/bookmarks before deleting their real node.
+                    for (Table table : List.of(TABLES.get(2), TABLES.get(1)))
+                        deleteMissing(table, fromScoped.get(table), toScoped.get(table), product, counters);
+                    int deletedNodes = deleteByNodeIds(TABLES.get(0), plan.removed(), product);
+                    counters.put("deletedNodes", deletedNodes);
+                    processed += plan.removed().size() * 4L;
+                    // Parent nodes must exist before children or their dependent records.
+                    for (Table table : TABLES) {
+                        if (!table.name().equals("node") && !table.name().equals("children")
+                            && !table.name().equals("bookmark")) {
+                            int removedByNode = counters.getOrDefault("deleted" + table.counterName(), 0);
+                            deleteMissing(table, fromScoped.get(table), toScoped.get(table), product, counters);
+                            counters.merge("deleted" + table.counterName(), removedByNode, Integer::sum);
+                        }
+                        writeChanged(table, fromScoped.get(table), toScoped.get(table), product, counters, destinationHasMaster);
+                    }
+                    timing("Incremental apply", applyTick);
+
+                    phase("Incremental: verifying changed rows and all metadata");
+                    IncrementalPreviewService.Snapshot afterMeta = incrementalPreview.snapshot(destination);
+                    IncrementalPreviewService.Preview remaining = IncrementalPreviewService.analyze(sourceMeta, afterMeta);
+                    if (!remaining.metadataAffectedNodes().isEmpty())
+                        throw new IllegalStateException("Incremental metadata verification failed");
+                    for (Table table : TABLES) {
+                        if (table.name().equals("children") || table.name().equals("bookmark")) continue;
+                        Map<List<Object>, List<Object>> after = readSelected(destination, table, active);
+                        if (!equalTableRows(fromScoped.get(table), after))
+                            throw new IllegalStateException("Incremental verification failed: " + table.name());
+                    }
+                    for (Table table : List.of(TABLES.get(0), TABLES.get(3), TABLES.get(4), TABLES.get(5))) {
+                        if (countRowsForNodes(destination, table, plan.removed()) != 0)
+                            throw new IllegalStateException("Removed node still has rows in " + table.name());
+                    }
+                    for (Table table : TABLES) {
+                        counters.put("from" + table.countName() + "Count", countTable(source, table));
+                        counters.put("destination" + table.countName() + "Count", countTable(destination, table));
+                    }
+                    processed = total;
+                });
+            });
+            phase("Incremental: committed and verified");
+            status = new Status("SUCCEEDED", started, Instant.now(),
+                "Incremental changes committed; affected rows and all metadata verified. Run Legacy Full Sync for complete repair.");
+            try {
+                statistics.resetStatistics();
+                counters.forEach((key, value) -> statistics.set(key, value.toString()));
+            } catch (RuntimeException e) {
+                log.warn("Incremental data committed, but monitoring counters could not be saved", e);
+                status = new Status("SUCCEEDED", started, status.finishedAt(),
+                    "Incremental changes committed; monitoring counters unavailable.");
+            }
+        } catch (RuntimeException e) {
+            phase("Incremental: failed");
+            status = new Status("FAILED", started, Instant.now(), e instanceof SyncSafetyException
+                ? e.getMessage() : "Incremental synchronization failed; check the local application log.");
+            log.error("Incremental synchronization did not complete; verify target if connection was lost during commit", e);
+            throw e;
+        } finally {
+            timing("Incremental overall", startedTick);
+            lock.unlock();
+        }
+    }
+
+    private void checkIncrementalDeletes(int deletes, int targetCount, int sourceCount) {
+        if (targetCount == 0) return;
+        if (sourceCount == 0 && !allowEmptySource)
+            throw new SyncSafetyException("Empty source deletion blocked; sync.allow-empty-source is false");
+        if (deletes * 100L > targetCount * (long) maxDeletePercent)
+            throw new SyncSafetyException("Deletion exceeds sync.max-delete-percent; no destination changes applied");
+    }
+
+    private static Map<List<Object>, List<Object>> metadataRows(Map<Long, List<Object>> rows, Table table) {
+        Map<List<Object>, List<Object>> result = new LinkedHashMap<>();
+        for (var entry : rows.entrySet()) {
+            List<Object> row = new ArrayList<>(entry.getValue());
+            if (table.name().equals("children") && row.size() == 3) row.add(0);
+            result.put(List.of(canonical(entry.getKey())), row);
+        }
+        return result;
+    }
+
+    /** Avoid retrieving removed BLOB contents; SQL DELETE returns only the number of rows affected. */
+    private int deleteByNodeIds(Table table, Set<Long> ids, String product) {
+        int count = 0;
+        for (Long id : ids)
+            count += destination.update("DELETE FROM " + quote(table.name(), product)
+                + " WHERE " + quote("node_id", product) + "=?", id);
+        return count;
+    }
+
+    private int countRowsForNodes(JdbcTemplate jdbc, Table table, Set<Long> ids) {
+        if (ids.isEmpty()) return 0;
+        String product = jdbc.execute((org.springframework.jdbc.core.ConnectionCallback<String>)
+            c -> c.getMetaData().getDatabaseProductName());
+        int count = 0;
+        for (List<Long> batch : idBatches(ids)) {
+            String query = "SELECT COUNT(*) FROM " + quote(table.name(), product) + " WHERE "
+                + quote("node_id", product) + " IN (" + placeholders(batch.size()) + ")";
+            count += Objects.requireNonNull(jdbc.queryForObject(query, Integer.class, batch.toArray()));
+        }
+        return count;
+    }
+
+    private int countTable(JdbcTemplate jdbc, Table table) {
+        String product = jdbc.execute((org.springframework.jdbc.core.ConnectionCallback<String>)
+            c -> c.getMetaData().getDatabaseProductName());
+        return Objects.requireNonNull(jdbc.queryForObject("SELECT COUNT(*) FROM " + quote(table.name(), product), Integer.class));
+    }
+
+    private static boolean equalTableRows(Map<List<Object>, List<Object>> a, Map<List<Object>, List<Object>> b) {
+        if (!a.keySet().equals(b.keySet())) return false;
+        for (var row : a.entrySet()) if (!equalRow(row.getValue(), b.get(row.getKey()))) return false;
+        return true;
+    }
+
+    private static String placeholders(int size) { return String.join(",", Collections.nCopies(size, "?")); }
+
+    private static List<List<Long>> idBatches(Set<Long> ids) {
+        List<Long> sorted = new ArrayList<>(ids);
+        List<List<Long>> batches = new ArrayList<>();
+        for (int i = 0; i < sorted.size(); i += 200)
+            batches.add(sorted.subList(i, Math.min(i + 200, sorted.size())));
+        return batches;
+    }
+
+    /** Read whole rows only for selected real node IDs. The old full-read code is unchanged. */
+    private Map<List<Object>, List<Object>> readSelected(JdbcTemplate jdbc, Table table, Set<Long> ids) {
+        Map<List<Object>, List<Object>> result = new LinkedHashMap<>();
+        if (ids.isEmpty()) return result;
+        return jdbc.execute((org.springframework.jdbc.core.ConnectionCallback<Map<List<Object>, List<Object>>>) c -> {
+            String product = c.getMetaData().getDatabaseProductName();
+            for (List<Long> batch : idBatches(ids)) {
+                String sql = "SELECT * FROM " + quote(table.name(), product) + " WHERE "
+                    + quote("node_id", product) + " IN (" + placeholders(batch.size()) + ")";
+                try (PreparedStatement st = c.prepareStatement(sql)) {
+                    for (int i = 0; i < batch.size(); i++) st.setLong(i + 1, batch.get(i));
+                    try (ResultSet rs = st.executeQuery()) {
+                        Set<String> actual = new HashSet<>();
+                        for (int i = 1; i <= rs.getMetaData().getColumnCount(); i++)
+                            actual.add(rs.getMetaData().getColumnName(i).toLowerCase(Locale.ROOT));
+                        while (rs.next()) {
+                            List<Object> values = new ArrayList<>();
+                            for (String column : table.columns()) {
+                                Object value = column.equals("master_id") && !actual.contains(column) ? 0
+                                    : column.equals("png") ? rs.getBytes(column) : rs.getObject(column);
+                                if (column.equals("master_id") && value == null) value = 0;
+                                if (value instanceof Clob) value = rs.getString(column);
+                                values.add(value);
+                            }
+                            List<Object> key = values.subList(0, table.keys()).stream().map(SyncService::canonical).toList();
+                            if (key.stream().anyMatch(Objects::isNull) || result.put(key, values) != null)
+                                throw new SyncSafetyException("Null or duplicate key in " + table.name());
+                        }
+                    }
+                }
+            }
+            return result;
+        });
+    }
+
+    /** Validates every table even when no node IDs qualify for scoped content reads. */
+    private void validateIncrementalSchema(JdbcTemplate jdbc) {
+        jdbc.execute((org.springframework.jdbc.core.ConnectionCallback<Void>) c -> {
+            String product = c.getMetaData().getDatabaseProductName();
+            for (Table table : TABLES) {
+                try (Statement st = c.createStatement();
+                     ResultSet rs = st.executeQuery("SELECT * FROM " + quote(table.name(), product) + " WHERE 1=0")) {
+                    Set<String> columns = new HashSet<>();
+                    for (int i = 1; i <= rs.getMetaData().getColumnCount(); i++)
+                        columns.add(rs.getMetaData().getColumnName(i).toLowerCase(Locale.ROOT));
+                    Set<String> expected = new HashSet<>(table.columns());
+                    if (table.name().equals("children") && !columns.contains("master_id")) expected.remove("master_id");
+                    if (!columns.equals(expected)) throw new SyncSafetyException("Unsupported schema for table " + table.name());
+                }
+                if ("MySQL".equals(product)) {
+                    String engine = jdbc.queryForObject(
+                        "SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=?",
+                        String.class, table.name());
+                    if (!"InnoDB".equalsIgnoreCase(engine))
+                        throw new SyncSafetyException("MySQL tables must use InnoDB for rollback support");
+                }
+            }
+            return null;
+        });
     }
 
     public static boolean sameSqliteFile(String a, String b) {

@@ -123,7 +123,7 @@ public class IncrementalPreviewService {
     record Snapshot(Map<Long, List<Object>> nodes, Map<Long, List<Object>> children,
                             Map<Long, List<Object>> bookmarks) {}
 
-    private Snapshot snapshot(JdbcTemplate jdbc) {
+    Snapshot snapshot(JdbcTemplate jdbc) {
         return jdbc.execute((ConnectionCallback<Snapshot>) c -> {
             String product = c.getMetaData().getDatabaseProductName();
             // The node and children metadata is intentionally read without image/grid/codebox BLOBs.
@@ -131,8 +131,16 @@ public class IncrementalPreviewService {
                 "node_id", "name", "syntax", "tags", "is_ro", "is_richtxt", "has_codebox",
                 "has_table", "has_image", "level", "ts_creation", "ts_lastsave"), product);
             List<String> childrenColumns = new ArrayList<>(List.of("node_id", "father_id", "sequence"));
-            if (hasColumn(c, "children", "master_id")) childrenColumns.add("master_id");
+            boolean hasMaster = hasColumn(c, "children", "master_id");
+            if (hasMaster) childrenColumns.add("master_id");
             Map<Long, List<Object>> children = read(c, "children", "node_id", childrenColumns, product);
+            // A legacy CTB without master_id has the same semantic default (0).
+            // Normalize before comparing source with a modern destination schema.
+            if (!hasMaster) children.replaceAll((id, values) -> {
+                List<Object> normalized = new ArrayList<>(values);
+                normalized.add(0);
+                return normalized;
+            });
             Map<Long, List<Object>> bookmarks = read(c, "bookmark", "node_id", List.of("node_id", "sequence"), product);
             return new Snapshot(nodes, children, bookmarks);
         });

@@ -24,11 +24,20 @@ public class SyncProgressController {
 
     @PostMapping("/sync/start")
     public ResponseEntity<SyncService.Progress> start() {
+        return submit(service::syncNodes);
+    }
+
+    @PostMapping("/sync/incremental/start")
+    public ResponseEntity<SyncService.Progress> startIncremental() {
+        return submit(service::syncIncremental);
+    }
+
+    private ResponseEntity<SyncService.Progress> submit(Runnable job) {
         if ("RUNNING".equals(service.getStatus().state()) || !queued.compareAndSet(false, true))
             return ResponseEntity.status(409).body(service.getProgress());
         try {
             executor.execute(() -> {
-                try { service.syncNodes(); }
+                try { job.run(); }
                 catch (RuntimeException ignored) { /* SyncService records and logs the failure. */ }
                 finally { queued.set(false); }
             });
