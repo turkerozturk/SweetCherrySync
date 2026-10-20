@@ -21,30 +21,88 @@ public class IncrementalPreviewService {
         destination = new JdbcTemplate(to);
     }
 
+    /**
+     * Preview deliberately separates hierarchy changes from content changes.
+     * A timestamp is diagnostic information, never the sole inclusion criterion.
+     * "removed" means an absent real node, not merely a removed shared-node link.
+     */
     public record Preview(int sourceNodes, int destinationNodes, Set<Long> added,
                           Set<Long> removed, Set<Long> changed, Set<Long> childrenChanged,
-                          boolean bookmarksChanged, Set<Long> affectedNodes, String warning) {}
+                          boolean bookmarksChanged, Set<Long> affectedNodes, String warning,
+                          Set<Long> childrenAdded, Set<Long> childrenRemoved,
+                          Set<Long> bookmarksAdded, Set<Long> bookmarksRemoved,
+                          Set<Long> bookmarksModified, Set<Long> metadataAffectedNodes,
+                          Set<Long> contentAffectedNodes, Long destinationLatestModified,
+                          Set<Long> timestampCandidates) {}
 
     public Preview preview() {
         String sourceUrl = source.execute((ConnectionCallback<String>) c -> c.getMetaData().getURL());
         String destinationUrl = destination.execute((ConnectionCallback<String>) c -> c.getMetaData().getURL());
         if (SyncService.sameSqliteFile(sourceUrl, destinationUrl))
             throw new SyncService.SyncSafetyException("Source and destination must be different files");
+        // Read-only snapshots: node, children and bookmark, without BLOB tables.
         Snapshot a = snapshot(source);
         Snapshot b = snapshot(destination);
+        return analyze(a, b);
+    }
+
+    static Preview analyze(Snapshot a, Snapshot b) {
         Set<Long> added = difference(a.nodes.keySet(), b.nodes.keySet());
         Set<Long> removed = difference(b.nodes.keySet(), a.nodes.keySet());
         Set<Long> changed = changed(a.nodes, b.nodes);
+        Set<Long> childrenAdded = difference(a.children.keySet(), b.children.keySet());
+        Set<Long> childrenRemoved = difference(b.children.keySet(), a.children.keySet());
         Set<Long> childrenChanged = changed(a.children, b.children);
-        boolean bookmarksChanged = !a.bookmarks.equals(b.bookmarks);
-        Set<Long> affected = new TreeSet<>();
-        affected.addAll(added);
-        affected.addAll(removed);
-        affected.addAll(changed);
-        affected.addAll(childrenChanged);
+        Set<Long> bookmarksAdded = difference(a.bookmarks.keySet(), b.bookmarks.keySet());
+        Set<Long> bookmarksRemoved = difference(b.bookmarks.keySet(), a.bookmarks.keySet());
+        Set<Long> bookmarksModified = changed(a.bookmarks, b.bookmarks);
+        boolean bookmarksChanged = !bookmarksAdded.isEmpty() || !bookmarksRemoved.isEmpty()
+            || !bookmarksModified.isEmpty();
+
+        // Deleted real nodes need dependent-row removal. A moved/reordered child
+        // does not need an image/grid/codebox read unless its node metadata changed.
+        Set<Long> contentAffected = union(added, removed, changed);
+        Set<Long> metadataAffected = union(contentAffected, childrenAdded, childrenRemoved,
+            childrenChanged, bookmarksAdded, bookmarksRemoved, bookmarksModified);
+
+        // ts_lastsave is the LAST item in the explicitly selected node columns.
+        // The maximum target timestamp is only advisory: older nodes can be edited,
+        // and deletes/bookmark reorders do not necessarily update timestamps.
+        Long latest = latestModified(b.nodes);
+        Set<Long> timestampCandidates = new TreeSet<>();
+        if (latest != null) for (var row : a.nodes.entrySet()) {
+            Long timestamp = asTimestamp(row.getValue().get(row.getValue().size() - 1));
+            if (timestamp != null && timestamp >= latest) timestampCandidates.add(row.getKey());
+        }
         return new Preview(a.nodes.size(), b.nodes.size(), added, removed, changed,
-            childrenChanged, bookmarksChanged, affected,
-            "Preview only: no writes, no BLOB inspection. Changes to attachments without node metadata changes may be missed. Run legacy Full Sync for complete verification.");
+            childrenChanged, bookmarksChanged, metadataAffected,
+            "Read-only preview: no writes or BLOB reads. Timestamps are advisory, not a safe cutoff. "
+                + "Changes made only to dependent records without updating node metadata, or direct "
+                + "tampering with unchanged target BLOBs, cannot be detected. Use Legacy Full Sync for verification.",
+            childrenAdded, childrenRemoved, bookmarksAdded, bookmarksRemoved, bookmarksModified,
+            metadataAffected, contentAffected, latest, timestampCandidates);
+    }
+
+    @SafeVarargs
+    private static Set<Long> union(Set<Long>... sets) {
+        Set<Long> combined = new TreeSet<>();
+        for (Set<Long> set : sets) combined.addAll(set);
+        return combined;
+    }
+
+    private static Long latestModified(Map<Long, List<Object>> nodes) {
+        Long latest = null;
+        for (List<Object> row : nodes.values()) {
+            Long value = asTimestamp(row.get(row.size() - 1));
+            if (value != null && (latest == null || value > latest)) latest = value;
+        }
+        return latest;
+    }
+
+    private static Long asTimestamp(Object value) {
+        if (value == null) return null;
+        if (value instanceof Number number) return number.longValue();
+        throw new SyncService.SyncSafetyException("Unsupported ts_lastsave data type");
     }
 
     static Set<Long> difference(Set<Long> a, Set<Long> b) {
@@ -62,7 +120,7 @@ public class IncrementalPreviewService {
         return result;
     }
 
-    private record Snapshot(Map<Long, List<Object>> nodes, Map<Long, List<Object>> children,
+    record Snapshot(Map<Long, List<Object>> nodes, Map<Long, List<Object>> children,
                             Map<Long, List<Object>> bookmarks) {}
 
     private Snapshot snapshot(JdbcTemplate jdbc) {
