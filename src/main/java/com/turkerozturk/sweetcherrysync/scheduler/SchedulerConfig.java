@@ -35,7 +35,7 @@ import java.util.Date;
 
 @Configuration
 @EnableScheduling
-@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name = "my.scheduler.enabled", havingValue = "true", matchIfMissing = true)
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name = "my.scheduler.legacy-enabled", havingValue = "true", matchIfMissing = false)
 public class SchedulerConfig {
 
     private static final Logger logger = LoggerFactory.getLogger(SchedulerConfig.class);

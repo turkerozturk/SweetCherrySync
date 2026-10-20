@@ -32,3 +32,6 @@ build/
 ### VS Code ###
 .vscode/
 /SweetCherrySync.mv.db
+
+# Local post-commit audit contains private note titles; never commit it.
+/logs/

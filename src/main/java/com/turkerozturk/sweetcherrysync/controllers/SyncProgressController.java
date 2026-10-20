@@ -1,6 +1,11 @@
 package com.turkerozturk.sweetcherrysync.controllers;
 
 import com.turkerozturk.sweetcherrysync.services.SyncService;
+import com.turkerozturk.sweetcherrysync.my.services.MyService;
+import com.turkerozturk.sweetcherrysync.my.enums.Statistics;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import java.util.concurrent.*;
@@ -10,6 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @RestController
 public class SyncProgressController {
     private final SyncService service;
+    private final MyService statistics;
     private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "sweetcherrysync-web-job");
         thread.setDaemon(true);
@@ -17,7 +23,20 @@ public class SyncProgressController {
     });
     private final AtomicBoolean queued = new AtomicBoolean();
 
-    public SyncProgressController(SyncService service) { this.service = service; }
+    public SyncProgressController(SyncService service, MyService statistics) {
+        this.service = service;
+        this.statistics = statistics;
+    }
+
+    /** Only publish known counters, never unrelated settings or connection secrets. */
+    @GetMapping("/sync/counters")
+    public Map<String, String> counters() {
+        Set<String> known = java.util.Arrays.stream(Statistics.values())
+            .map(Statistics::getValue).collect(Collectors.toSet());
+        return statistics.getAllSettings().stream()
+            .filter(s -> known.contains(s.getKey()))
+            .collect(Collectors.toMap(s -> s.getKey(), s -> s.getValue() == null ? "0" : s.getValue(), (a, b) -> b));
+    }
 
     @GetMapping("/sync/progress")
     public SyncService.Progress progress() { return service.getProgress(); }
@@ -30,6 +49,12 @@ public class SyncProgressController {
     @PostMapping("/sync/incremental/start")
     public ResponseEntity<SyncService.Progress> startIncremental() {
         return submit(service::syncIncremental);
+    }
+
+    /** Shared queue for web clicks and the optional runtime scheduler. */
+    public boolean schedule(String mode) {
+        Runnable job = "LEGACY_FULL".equals(mode) ? service::syncNodes : service::syncIncremental;
+        return submit(job).getStatusCode().value() == 202;
     }
 
     private ResponseEntity<SyncService.Progress> submit(Runnable job) {

@@ -67,6 +67,15 @@ public class SyncService {
     }
     private void phase(String value) { phase = value; log.info("Sync phase: {}", value); }
     private final ReentrantLock lock = new ReentrantLock();
+    private SyncChangeJournal changeJournal;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setChangeJournal(SyncChangeJournal changeJournal) { this.changeJournal = changeJournal; }
+
+    private void auditAfterCommit(String mode, Instant started, List<SyncChangeJournal.Change> changes,
+                                  Map<Long, String> names) {
+        if (changeJournal != null) changeJournal.appendCommitted(mode, started, changes, names);
+    }
 
     // Timings are diagnostic only: no SQL values, credentials or row content are logged.
     private static long tick() { return System.nanoTime(); }
@@ -128,6 +137,8 @@ public class SyncService {
             Map<Table, Map<List<Object>, List<Object>>> snapshot = sourceTransaction.execute(s -> read(source));
             timing("Source snapshot total", stepTick);
             Map<String, Integer> counters = new LinkedHashMap<>();
+            List<SyncChangeJournal.Change> audit = new ArrayList<>();
+            Map<Long, String> auditNames = new HashMap<>();
             phase("Checking destination schema and preparing transaction");
             stepTick = tick();
             destinationTransaction.executeWithoutResult(s -> {
@@ -135,6 +146,9 @@ public class SyncService {
                 long readTick = tick();
                 Map<Table, Map<List<Object>, List<Object>>> before = read(destination);
                 timing("Destination snapshot before changes", readTick);
+                auditNames.putAll(SyncChangeJournal.names(snapshot.get(TABLES.get(0)), before.get(TABLES.get(0))));
+                for (Table table : TABLES)
+                    audit.addAll(SyncChangeJournal.differences(table.name(), snapshot.get(table), before.get(table)));
                 long prepareTick = tick();
                 checkDeletes(snapshot.get(TABLES.get(0)), before.get(TABLES.get(0)));
                 String product = destination.execute((org.springframework.jdbc.core.ConnectionCallback<String>)
@@ -171,15 +185,17 @@ public class SyncService {
             });
             timing("Destination transaction including commit", stepTick);
             phase("Committed and verified");
-            status = new Status("SUCCEEDED", started, Instant.now(), "Destination committed and content verified.");
+            auditAfterCommit("LEGACY_FULL", started, audit, auditNames);
             // Monitoring is separate from the committed data; its failure must not label a commit as a rollback.
+            String finalMessage = "Destination committed and content verified.";
             try {
                 statistics.resetStatistics();
                 counters.forEach((key, value) -> statistics.set(key, value.toString()));
             } catch (RuntimeException e) {
                 log.warn("Data committed, but monitoring counters could not be saved", e);
-                status = new Status("SUCCEEDED", started, status.finishedAt(), "Data committed; monitoring counters unavailable.");
+                finalMessage = "Data committed; monitoring counters unavailable.";
             }
+            status = new Status("SUCCEEDED", started, Instant.now(), finalMessage);
         } catch (RuntimeException e) {
             phase("Failed");
             status = new Status("FAILED", started, Instant.now(), e instanceof SyncSafetyException
@@ -204,6 +220,8 @@ public class SyncService {
         processed = 0; total = 0;
         long startedTick = tick();
         Map<String, Integer> counters = new LinkedHashMap<>();
+        List<SyncChangeJournal.Change> audit = new ArrayList<>();
+        Map<Long, String> auditNames = new HashMap<>();
         try {
             phase("Incremental: checking database connections");
             String sourceUrl = source.execute((org.springframework.jdbc.core.ConnectionCallback<String>)
@@ -224,6 +242,9 @@ public class SyncService {
                     validateIncrementalSchema(destination);
                     IncrementalPreviewService.Snapshot targetMeta = incrementalPreview.snapshot(destination);
                     IncrementalPreviewService.Preview plan = IncrementalPreviewService.analyze(sourceMeta, targetMeta);
+                    auditNames.putAll(SyncChangeJournal.names(
+                        metadataRows(sourceMeta.nodes(), TABLES.get(0)),
+                        metadataRows(targetMeta.nodes(), TABLES.get(0))));
                     checkIncrementalDeletes(plan.removed().size(), targetMeta.nodes().size(), sourceMeta.nodes().size());
                     if (plan.contentAffectedNodes().size() > 1000)
                         throw new SyncSafetyException("Too many content candidates for incremental mode; run Legacy Full Sync");
@@ -251,6 +272,15 @@ public class SyncService {
                             toScoped.put(table, readSelected(destination, table, active));
                         }
                     }
+                    for (Table table : TABLES) {
+                        if (table.name().equals("node")) {
+                            audit.addAll(SyncChangeJournal.differences(table.name(),
+                                metadataRows(sourceMeta.nodes(), table), metadataRows(targetMeta.nodes(), table)));
+                        } else {
+                            audit.addAll(SyncChangeJournal.differences(table.name(),
+                                fromScoped.get(table), toScoped.get(table)));
+                        }
+                    }
                     // Real node removals must not download their old dependent BLOB values.
                     // Metadata-only removal and scoped content updates have separate paths.
                     total = 1 + plan.removed().size() * 4L + TABLES.stream()
@@ -258,13 +288,13 @@ public class SyncService {
                     phase("Incremental: applying changes to destination");
                     long applyTick = tick();
                     for (Table table : List.of(TABLES.get(5), TABLES.get(4), TABLES.get(3))) {
-                        int deleted = deleteByNodeIds(table, plan.removed(), product);
+                        int deleted = deleteByNodeIds(table, plan.removed(), product, audit);
                         counters.put("deleted" + table.counterName(), deleted);
                     }
                     // Remove absent hierarchy/bookmarks before deleting their real node.
                     for (Table table : List.of(TABLES.get(2), TABLES.get(1)))
                         deleteMissing(table, fromScoped.get(table), toScoped.get(table), product, counters);
-                    int deletedNodes = deleteByNodeIds(TABLES.get(0), plan.removed(), product);
+                    int deletedNodes = deleteByNodeIds(TABLES.get(0), plan.removed(), product, audit);
                     counters.put("deletedNodes", deletedNodes);
                     processed += plan.removed().size() * 4L;
                     // Parent nodes must exist before children or their dependent records.
@@ -302,16 +332,16 @@ public class SyncService {
                 });
             });
             phase("Incremental: committed and verified");
-            status = new Status("SUCCEEDED", started, Instant.now(),
-                "Incremental changes committed; affected rows and all metadata verified. Run Legacy Full Sync for complete repair.");
+            auditAfterCommit("INCREMENTAL", started, audit, auditNames);
+            String finalMessage = "Incremental changes committed; affected rows and all metadata verified. Run Legacy Full Sync for complete repair.";
             try {
                 statistics.resetStatistics();
                 counters.forEach((key, value) -> statistics.set(key, value.toString()));
             } catch (RuntimeException e) {
                 log.warn("Incremental data committed, but monitoring counters could not be saved", e);
-                status = new Status("SUCCEEDED", started, status.finishedAt(),
-                    "Incremental changes committed; monitoring counters unavailable.");
+                finalMessage = "Incremental changes committed; monitoring counters unavailable.";
             }
+            status = new Status("SUCCEEDED", started, Instant.now(), finalMessage);
         } catch (RuntimeException e) {
             phase("Incremental: failed");
             status = new Status("FAILED", started, Instant.now(), e instanceof SyncSafetyException
@@ -343,11 +373,19 @@ public class SyncService {
     }
 
     /** Avoid retrieving removed BLOB contents; SQL DELETE returns only the number of rows affected. */
-    private int deleteByNodeIds(Table table, Set<Long> ids, String product) {
+    private int deleteByNodeIds(Table table, Set<Long> ids, String product,
+                                List<SyncChangeJournal.Change> audit) {
         int count = 0;
-        for (Long id : ids)
-            count += destination.update("DELETE FROM " + quote(table.name(), product)
+        for (Long id : ids) {
+            int affected = destination.update("DELETE FROM " + quote(table.name(), product)
                 + " WHERE " + quote("node_id", product) + "=?", id);
+            count += affected;
+            if (affected > 0 && !table.name().equals("node")) {
+                // Old attachment payloads are intentionally not fetched; report affected row count.
+                audit.add(new SyncChangeJournal.Change(table.name(), "REMOVED_NODE_DEPENDENTS",
+                    List.of(id), affected));
+            }
+        }
         return count;
     }
 

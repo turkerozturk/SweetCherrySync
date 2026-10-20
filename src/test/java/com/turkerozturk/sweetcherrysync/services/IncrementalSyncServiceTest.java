@@ -106,6 +106,20 @@ class IncrementalSyncServiceTest {
         assertArrayEquals(new byte[]{2}, to.queryForObject("SELECT png FROM image", byte[].class));
     }
 
+    @Test void auditFileIsWrittenOnlyForCommittedChanges() throws Exception {
+        Path auditFile = folder.resolve("logs/node-changes.jsonl");
+        service.setChangeJournal(new SyncChangeJournal(true, auditFile.toString(),
+            new com.fasterxml.jackson.databind.ObjectMapper()));
+        node(1, 1);
+        service.syncIncremental();
+        assertTrue(Files.readString(auditFile).contains("\"action\":\"CREATED\""));
+        long originalLength = Files.size(auditFile);
+        from.update("UPDATE node SET txt='broken',ts_lastsave=2 WHERE node_id=1");
+        to.execute("CREATE TRIGGER fail_audit BEFORE UPDATE ON node BEGIN SELECT RAISE(ABORT,'fail'); END");
+        assertThrows(RuntimeException.class, service::syncIncremental);
+        assertEquals(originalLength, Files.size(auditFile));
+    }
+
     @Test void supportsLegacySourceWithoutChildrenMasterId() {
         from.execute("ALTER TABLE children DROP COLUMN master_id");
         from.update("INSERT INTO node(node_id,name,txt,ts_creation,ts_lastsave) VALUES(1,'old','body',1,1)");

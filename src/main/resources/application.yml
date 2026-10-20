@@ -22,7 +22,9 @@ my:
     init-mode: always
     ddl-auto: create
   scheduler:
-    enabled: true
+    # Legacy fixed-delay scheduler is retired by default. Enable explicitly only for old behavior.
+    enabled: false
+    legacy-enabled: false
     # using in SchedulerConfig.java -> syncDatabases()
     delayInSeconds: 60
 
@@ -178,3 +180,14 @@ destination:
 sync:
   max-delete-percent: 20
   allow-empty-source: false
+
+  # Runtime UI scheduler: disabled by default, with a safe Incremental mode default.
+  # UI edits apply immediately but reset to these defaults when the application restarts.
+  auto:
+    enabled: false
+    mode: INCREMENTAL
+    interval-seconds: 300
+  # Stored outside both source CTB and destination database. Contains node names: protect this file.
+  audit:
+    enabled: true
+    path: ./logs/sync-node-changes.jsonl
